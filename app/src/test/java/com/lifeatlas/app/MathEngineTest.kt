@@ -18,4 +18,7 @@ class MathEngineTest {
     @Test fun midnightUsesLocalDates(){val parts=MathEngine.splitByDate(Instant.parse("2026-11-05T15:00:00Z"),Instant.parse("2026-11-05T17:00:00Z"),ZoneId.of("Asia/Shanghai"));assertEquals(3600L,parts[LocalDate.parse("2026-11-05")]);assertEquals(3600L,parts[LocalDate.parse("2026-11-06")])}
     @Test fun expressionIsDeterministic(){assertEquals(0,Expressions.eval(JSONObject("""{"op":"divide","args":[{"field":"ml"},{"const":"1000"}]}"""),mapOf("ml" to BigDecimal("1500"))).compareTo(BigDecimal("1.5")))}
     @Test(expected=IllegalArgumentException::class) fun expressionBudgetStopsDeepTree(){var e=JSONObject("""{"const":"1"}""");repeat(30){e=obj("op" to "add","args" to org.json.JSONArray().put(e))};Expressions.eval(e,emptyMap())}
+    @Test fun constantChartHasDistinctTicksAndCentredPoint(){val scale=chartScale(listOf(250.0));assertEquals(3,scale.ticks.distinct().size);assertTrue(scale.minimum<250 && scale.maximum>250)}
+    @Test fun narrowLargeChartUsesAnExplicitOffset(){val scale=chartScale(listOf(1000000000000.0,1000000000001.0));assertEquals(1000000000000.0,scale.offset,0.0);assertEquals(listOf("0","0.5","1"),scale.ticks)}
+
 }

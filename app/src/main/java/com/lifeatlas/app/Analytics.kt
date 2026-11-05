@@ -45,17 +45,19 @@ import java.time.YearMonth
 @Composable fun Trend(points:List<JSONObject>,unit:String,type:String="line") {
     val data=remember(points){points.mapNotNull{p->val v=p.s("value").toDoubleOrNull();val d=runCatching{LocalDate.parse(p.s("date")).toEpochDay()}.getOrNull();if(v!=null && v.isFinite() && d!=null) d to v else null}}
     if(data.isEmpty()) return
+    val scale=remember(data,type){chartScale(data.map{it.second},type=="bar")}
     val density=LocalDensity.current;val textPx=with(density){11.sp.toPx()};val accent=MaterialTheme.colorScheme.primary;val labelColor=readableColor(MaterialTheme.colorScheme.onSurfaceVariant,LocalAtlasBackground.current).toArgb();val grid=LocalAtlasTokens.current.chartGrid
-    Column {Text(if(type=="heatmap") "按日分布" else "日趋势 · $unit",style=MaterialTheme.typography.titleMedium)
+    Column {Text(if(type=="heatmap") "按日分布 · $unit" else "日趋势 · $unit",style=MaterialTheme.typography.titleMedium)
+        if(scale.offset!=0.0)Text("纵轴基准 "+java.math.BigDecimal.valueOf(scale.offset).stripTrailingZeros().toPlainString(),style=MaterialTheme.typography.bodySmall)
         Canvas(Modifier.fillMaxWidth().height(210.dp).testTag("trend-chart")) {
-            val left=56.dp.toPx();val top=16.dp.toPx();val right=size.width-8.dp.toPx();val bottom=size.height-38.dp.toPx();val width=right-left;val height=bottom-top
             val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=labelColor;textSize=textPx}
+            val left=maxOf(36.dp.toPx(),scale.ticks.maxOf{paint.measureText(it)}+10.dp.toPx()).coerceAtMost(size.width*.5f);val top=16.dp.toPx();val right=size.width-8.dp.toPx();val bottom=size.height-38.dp.toPx();val width=right-left;val height=bottom-top
             val minDay=data.minOf{it.first};val maxDay=data.maxOf{it.first};val dx=(maxDay-minDay).coerceAtLeast(1).toDouble()
-            val min=if(type=="bar") minOf(0.0,data.minOf{it.second}) else data.minOf{it.second};val max=if(type=="bar") maxOf(0.0,data.maxOf{it.second}) else data.maxOf{it.second};val span=(max-min).takeIf{it>0} ?: 1.0
+            val min=scale.minimum;val max=scale.maximum;val span=max-min
             fun x(day:Long)=left+if(maxDay==minDay) width/2 else ((day-minDay)/dx*width).toFloat()
             fun y(value:Double)=bottom-((value-min)/span*height).toFloat()
-            if(type!="heatmap")for(i in 0..2){val value=min+span*i/2;val yy=y(value);drawLine(grid,Offset(left,yy),Offset(right,yy),1f);drawContext.canvas.nativeCanvas.drawText("%.3g".format(java.util.Locale.ROOT,value),0f,yy+textPx/3,paint)}
-            val labels=if(type=="heatmap")emptyList() else listOf(minDay,(minDay+maxDay)/2,maxDay).distinct();labels.forEachIndexed{i,d->val label=LocalDate.ofEpochDay(d).toString().takeLast(5);val xx=when(i){0->left;labels.lastIndex->right-paint.measureText(label);else->x(d)-paint.measureText(label)/2};drawContext.canvas.nativeCanvas.drawText(label,xx,size.height-12.dp.toPx(),paint)}
+            if(type!="heatmap")for(i in 0..2){val value=min+span*i/2;val yy=y(value);drawLine(grid,Offset(left,yy),Offset(right,yy),1f);drawContext.canvas.nativeCanvas.drawText(scale.ticks[i],0f,yy+textPx/3,paint)}
+            val labels=if(type=="heatmap")emptyList() else listOf(minDay,(minDay+maxDay)/2,maxDay).distinct();labels.forEachIndexed{i,d->val label=LocalDate.ofEpochDay(d).toString().takeLast(5);val xx=when{labels.size==1->x(d)-paint.measureText(label)/2;i==0->left;i==labels.lastIndex->right-paint.measureText(label);else->x(d)-paint.measureText(label)/2};drawContext.canvas.nativeCanvas.drawText(label,xx,size.height-12.dp.toPx(),paint)}
             if(type=="heatmap") {
                 val monday=LocalDate.ofEpochDay(minDay).with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).toEpochDay()
                 val weeks=((maxDay-monday)/7+1).toInt();val cw=width/weeks.coerceAtLeast(1);val ch=height/7
@@ -64,7 +66,7 @@ import java.time.YearMonth
                 val label=LocalDate.ofEpochDay(minDay).toString()+" — "+LocalDate.ofEpochDay(maxDay)
                 drawContext.canvas.nativeCanvas.drawText(label,left,size.height-10.dp.toPx(),paint)
             }
-            else if(type=="bar")data.forEach{(d,v)->val zero=y(0.0);val yy=y(v);val bar=(width/(data.size*1.8)).toFloat().coerceAtMost(20.dp.toPx());drawRect(accent,Offset(x(d)-bar/2,minOf(zero,yy)),Size(bar,kotlin.math.abs(yy-zero).coerceAtLeast(2f)))}
+            else if(type=="bar")data.forEach{(d,v)->val zero=y(0.0);val yy=y(v);val bar=(width/((dx+1)*1.5)).toFloat().coerceAtMost(20.dp.toPx()).coerceAtLeast(0.5f);drawRect(accent,Offset(x(d)-bar/2,minOf(zero,yy)),Size(bar,kotlin.math.abs(yy-zero).coerceAtLeast(2f)))}
             else {data.zipWithNext().forEach{(a,b)->drawLine(accent,Offset(x(a.first),y(a.second)),Offset(x(b.first),y(b.second)),2.dp.toPx())};data.forEach{drawCircle(accent,3.dp.toPx(),Offset(x(it.first),y(it.second)))}}
         }
     }
