@@ -180,7 +180,7 @@ class MainActivity:ComponentActivity() {
                 "analytics" -> {
                     item{Text("分析",style=MaterialTheme.typography.headlineSmall)}
                     item{Column {OutlinedButton(onClick={financeDialog="transfer"}){Text("转账")};OutlinedButton(onClick={financeDialog="balance"}){Text("余额")};OutlinedButton(onClick={correlationDialog=true}){Text("相关性分析")}}}
-                    item{Analytics(vm,state)}
+                    item{Analytics(vm,state,onRecord={record=it})}
                     state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                 }
                 "settings" -> {

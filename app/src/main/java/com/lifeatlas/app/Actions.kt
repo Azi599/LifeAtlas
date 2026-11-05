@@ -26,7 +26,7 @@ class Actions(val store:AtlasStore) {
         "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",
         "atlas.copyObject" to "复制对象定义 args id,title?；不复制数据事实",
         "atlas.deleteObject" to "归档对象 args id，可撤销",
-        "atlas.record" to "新增记录 args metricId,value?(十进制字符串),date(YYYY-MM-DD),occurredAt?,fields?,eventId?,startAt?,endAt?。未知数值留空",
+        "atlas.record" to "新增记录 args metricId,value?(十进制字符串),unit?(原始数值的单位),date(YYYY-MM-DD),occurredAt?,fields?,eventId?,startAt?,endAt?,zone?(IANA 时区)。时刻需带 Z 或 UTC 偏移；未知数值留空",
         "atlas.editRecord" to "修改记录 args id,value?,date?,fields?,startAt?,endAt?,zone?,clearTime?；时长与区间必须一致",
         "atlas.deleteRecord" to "软删除记录 args id；可撤销",
         "atlas.restoreRecord" to "恢复记录 args id",
@@ -131,7 +131,7 @@ class Actions(val store:AtlasStore) {
                 if(a.has("archived")) row.put("archived",if(a.getBoolean("archived")) 1 else 0)
                 row.put("revision",row.getLong("revision")+1);row.put("updated_at",now());store.put("atlas_objects",row);return obj("id" to row.s("id"))
             }
-            "atlas.createEvent" -> return obj("id" to event(a.getString("text"),a.s("id").ifEmpty{uid()},a.s("date").ifEmpty{null},a.s("occurredAt").ifEmpty{null},a.s("zone",ZoneId.systemDefault().id)))
+            "atlas.createEvent" -> return obj("id" to event(a.getString("text"),a.s("id").ifEmpty{uid()},a.s("date").ifEmpty{null},a.s("occurredAt").ifEmpty{null},a.s("zone",ZoneId.systemDefault().id),source="text"))
             "atlas.deleteObject" -> return dispatch("atlas.updateObject",obj("id" to a.getString("id"),"archived" to true))
             "atlas.copyObject" -> {val source=store.one("atlas_objects",a.getString("id")) ?: error("对象不存在");return dispatch("atlas.createObject",obj("type" to source.s("type"),"title" to a.s("title",source.s("title")+" 副本"),"parentId" to source.s("parent_id").ifEmpty{null},"config" to JSONObject(source.s("config"))))}
             "atlas.relate"->{val from=a.getString("fromId");val to=a.getString("toId");require(store.one("atlas_objects",from)!=null && store.one("atlas_objects",to)!=null);val id=uid();store.put("atlas_relations",obj("id" to id,"from_id" to from,"to_id" to to,"kind" to a.s("kind","related")));return obj("id" to id)}
@@ -241,10 +241,10 @@ class Actions(val store:AtlasStore) {
             }
         };return result
     }
-    private fun event(raw:String,id:String=uid(),date:String?=null,occurred:String?=null,zone:String=ZoneId.systemDefault().id):String {
+    private fun event(raw:String,id:String=uid(),date:String?=null,occurred:String?=null,zone:String=ZoneId.systemDefault().id,source:String="workspace"):String {
         require(id.length<=120 && raw.length<=100000);if(store.one("atlas_events",id)!=null)return id
         if(date!=null)LocalDate.parse(date);ZoneId.of(zone);if(occurred!=null)require(Instant.parse(occurred).atZone(ZoneId.of(zone)).toLocalDate().toString()==date){"事件发生时刻与日期不一致"}
-        val t=now();store.put("atlas_events",obj("id" to id,"raw_input" to raw,"source" to "workspace","created_at" to t,"updated_at" to t,"zone" to zone,"local_date" to date,"occurred_at" to occurred,"precision" to if(occurred!=null) "INSTANT" else if(date!=null) "DATE" else "UNKNOWN"));return id
+        val t=now();store.put("atlas_events",obj("id" to id,"raw_input" to raw,"source" to source,"created_at" to t,"updated_at" to t,"zone" to zone,"local_date" to date,"occurred_at" to occurred,"precision" to if(occurred!=null) "INSTANT" else if(date!=null) "DATE" else "UNKNOWN"));return id
     }
     private fun record(a:JSONObject,raw:String,runWorkflow:Boolean=true):JSONObject {
         val metric=a.getString("metricId");val owner=store.one("atlas_objects",metric) ?: error("指标不存在");require(owner.s("type")=="METRIC" && owner.optInt("archived")==0)

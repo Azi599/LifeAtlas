@@ -106,10 +106,10 @@ fun retainCalculationHistory(before:JSONObject,next:JSONObject,revision:Long,mod
 
 object Units {
     private val definitions=mapOf(
-        "kg" to ("mass" to "1000"),"千克" to ("mass" to "1000"),"g" to ("mass" to "1"),"克" to ("mass" to "1"),"mg" to ("mass" to "0.001"),
+        "kg" to ("mass" to "1000"),"千克" to ("mass" to "1000"),"公斤" to ("mass" to "1000"),"斤" to ("mass" to "500"),"g" to ("mass" to "1"),"克" to ("mass" to "1"),"mg" to ("mass" to "0.001"),
         "L" to ("volume" to "1000"),"升" to ("volume" to "1000"),"ml" to ("volume" to "1"),"毫升" to ("volume" to "1"),
         "h" to ("time" to "3600"),"小时" to ("time" to "3600"),"min" to ("time" to "60"),"分钟" to ("time" to "60"),"d" to ("time" to "86400"),"天" to ("time" to "86400"),"s" to ("time" to "1"),"秒" to ("time" to "1"),
-        "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
+        "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"块" to ("CNY" to "1"),"块钱" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
     )
     fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};val numerator=value.multiply(f.second.toBigDecimal());return try{numerator.divide(t.second.toBigDecimal())}catch(_:ArithmeticException){numerator.divide(t.second.toBigDecimal(),MathContext(24))}}
     fun dimension(unit:String)=definitions[unit]?.first
