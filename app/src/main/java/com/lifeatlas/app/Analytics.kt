@@ -23,7 +23,8 @@ import java.time.YearMonth
 @Composable fun MetricPanel(metric:JSONObject,vm:AtlasModel,revision:Int,onRecord:()->Unit,chartType:String="line") {
     var month by remember{mutableStateOf(YearMonth.now().toString())};var result by remember{mutableStateOf<JSONObject?>(null)};var points by remember{mutableStateOf<List<JSONObject>>(emptyList())};var error by remember{mutableStateOf("")};var request by remember{mutableIntStateOf(0)}
     val config=remember(metric){JSONObject(metric.s("config"))}
-    val live=vm.ui.value.timers.any{it.s("metric_id")==metric.s("id")}
+    val currentState by vm.ui.collectAsState()
+    val live=currentState.timers.any{it.s("metric_id")==metric.s("id")}
     LaunchedEffect(metric.s("id"),revision,request,live){
         do {
             try{val ym=YearMonth.parse(month);result=vm.summary(metric.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString());points=vm.chart(metric.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString());error=""}catch(e:Exception){if(e is kotlinx.coroutines.CancellationException)throw e;error=e.message ?: "日期无效";break}

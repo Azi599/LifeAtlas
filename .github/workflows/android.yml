@@ -49,6 +49,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
@@ -61,7 +64,7 @@ jobs:
       - name: Enable KVM
         run: |
           sudo chmod 666 /dev/kvm
-      - run: ./gradlew --version
+      - run: bash scripts/verify_wrapper.sh
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
