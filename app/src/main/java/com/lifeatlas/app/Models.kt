@@ -19,6 +19,7 @@ val objectTypes=setOf("WORKSPACE","FOLDER","PROJECT","METRIC","DASHBOARD","VIEW"
 val aggregateMethods=setOf("SUM","MEAN","WEIGHTED_MEAN","LAST_SNAPSHOT","UNION_DURATION","MEDIAN","MIN","MAX","COUNT")
 fun validateMetric(config:JSONObject) {
     require(config.s("kind") in kinds) { "请选择数据语义" }
+    if(config.s("kind")=="ALLOCATION")require(Units.isTime(config.s("unit"))){"时间分配单位请选择秒、分钟或小时"}
     val method=config.s("aggregate",if(config.s("kind")=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")
     require(method in aggregateMethods) { "不支持的统计规则：$method" }
     require(config.s("unit").length<=30) { "单位过长" }
@@ -79,9 +80,10 @@ object Units {
     private val definitions=mapOf(
         "kg" to ("mass" to "1000"),"千克" to ("mass" to "1000"),"g" to ("mass" to "1"),"克" to ("mass" to "1"),"mg" to ("mass" to "0.001"),
         "L" to ("volume" to "1000"),"升" to ("volume" to "1000"),"ml" to ("volume" to "1"),"毫升" to ("volume" to "1"),
-        "h" to ("time" to "3600"),"小时" to ("time" to "3600"),"min" to ("time" to "60"),"分钟" to ("time" to "60"),"s" to ("time" to "1"),"秒" to ("time" to "1"),
+        "h" to ("time" to "3600"),"小时" to ("time" to "3600"),"min" to ("time" to "60"),"分钟" to ("time" to "60"),"d" to ("time" to "86400"),"天" to ("time" to "86400"),"s" to ("time" to "1"),"秒" to ("time" to "1"),
         "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
     )
-    fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};return value.multiply(f.second.toBigDecimal()).divide(t.second.toBigDecimal(),MathContext.DECIMAL128)}
+    fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};val numerator=value.multiply(f.second.toBigDecimal());return try{numerator.divide(t.second.toBigDecimal())}catch(_:ArithmeticException){numerator.divide(t.second.toBigDecimal(),MathContext(24))}}
+    fun isTime(unit:String)=definitions[unit]?.first=="time"
     fun currency(unit:String)=definitions[unit]?.first?.takeIf{it=="CNY"} ?: unit
 }

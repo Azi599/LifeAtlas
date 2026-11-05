@@ -19,7 +19,7 @@ class StorageTest {
     @Before fun setup(){context.deleteDatabase("tests.db");db=AtlasStore(context,"tests.db");actions=Actions(db)}
     @After fun cleanup(){db.close();context.deleteDatabase("tests.db")}
     private fun metric(kind:String="SNAPSHOT",aggregate:String="LAST_SNAPSHOT"):String {
-        val r=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "测试指标","config" to obj("kind" to kind,"unit" to "次","aggregate" to aggregate)));return r.getJSONObject("steps").getJSONObject("result").getString("id")
+        val r=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "测试指标","config" to obj("kind" to kind,"unit" to if(kind=="ALLOCATION") "秒" else "次","aggregate" to aggregate)));return r.getJSONObject("steps").getJSONObject("result").getString("id")
     }
     @Test fun pluginPersistsAcrossDatabaseReopen(){
         val manifest=obj("id" to "unknown.test","title" to "咖啡与阅读","version" to 1,"metrics" to JSONArray().put(obj("key" to "coffee","title" to "咖啡次数","kind" to "CHANGE","unit" to "杯","aggregate" to "SUM")).put(obj("key" to "pages","title" to "阅读页数","kind" to "CHANGE","unit" to "页","aggregate" to "SUM")),"views" to JSONArray().put(obj("title" to "咖啡趋势","metricKey" to "coffee","chart" to "bar")))

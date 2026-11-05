@@ -14,7 +14,12 @@ android {
         versionCode = providers.gradleProperty("atlasVersionCode").orElse("2").get().toInt()
         versionName = "0.2.0-dev"
     }
-    buildFeatures { compose = true }
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("standalone") {dimension="distribution";buildConfigField("String","CHANNEL","\"standalone\"")}
+        create("play") {dimension="distribution";buildConfigField("String","CHANNEL","\"play\"")}
+    }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }

@@ -8,29 +8,34 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.*
 
 data class AtlasState(
-    val busy:Boolean=false,val status:String="",val objects:List<JSONObject> = emptyList(),val facts:List<JSONObject> = emptyList(),
+    val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val objects:List<JSONObject> = emptyList(),val facts:List<JSONObject> = emptyList(),
     val operations:List<JSONObject> = emptyList(),val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
     val events:List<JSONObject> = emptyList(),val builds:List<JSONObject> = emptyList(),val layouts:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
     val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null
 )
 class AtlasModel(app:Application):AndroidViewModel(app) {
     val store=AtlasStore(app);val settings=Settings(app);val actions=Actions(store);val planner=Planner(actions)
+    private val commandMutex=Mutex()
     private val state=MutableStateFlow(AtlasState());val ui=state.asStateFlow()
     var draft:String=settings.prefs.getString("draft","") ?: ""
     init {refresh()}
-    private fun update(block:(AtlasState)->AtlasState) {state.value=block(state.value)}
+    private fun update(block:(AtlasState)->AtlasState) {state.update(block)}
     fun saveDraft(s:String) {draft=s;settings.prefs.edit().putString("draft",s).apply()}
     fun refresh()=viewModelScope.launch(Dispatchers.IO) {load()}
-    private fun load() {update{it.copy(objects=store.objects(all=true),facts=store.facts(),events=store.query("SELECT * FROM atlas_events e WHERE NOT EXISTS (SELECT 1 FROM atlas_facts f WHERE f.event_id=e.id) ORDER BY created_at DESC LIMIT 50"),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT * FROM atlas_plugins ORDER BY created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
+    private fun load() {update{it.copy(theme=settings.prefs.getString("theme","system") ?: "system",compact=settings.prefs.getBoolean("compact",false),objects=store.objects(all=true),facts=store.facts(),events=store.query("SELECT * FROM atlas_events e WHERE NOT EXISTS (SELECT 1 FROM atlas_facts f WHERE f.event_id=e.id) ORDER BY created_at DESC LIMIT 50"),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT * FROM atlas_plugins ORDER BY created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
-        if(state.value.busy) return@launch
+        commandMutex.withLock {
         update{it.copy(busy=true,status=title)}
-        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message","已完成"))};load()} catch(e:Exception){update{it.copy(status=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
+        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成"))};load()} catch(e:Exception){update{it.copy(status=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
+        }
     }
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}
     fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在执行"){actions.execute(plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)},confirmed)}
@@ -40,8 +45,13 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
             if(input.trim().startsWith("{")) return@work actions.execute(JSONObject(input))
             Offline.plan(input,store)?.let{return@work actions.execute(it)}
             val context=obj("objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""))
-            val plan=planner.plan(settings.ai(),input,context,state.value.image)
-            if(plan.has("question")){update{it.copy(pending=plan)};obj("message" to plan.getString("question"),"question" to plan)} else actions.execute(plan)
+            var plan=planner.plan(settings.ai(),input,context,state.value.image)
+            var attempt=0
+            while(true) {
+                if(plan.has("question"))return@work obj("message" to plan.getString("question"),"question" to plan)
+                try{update{it.copy(status="正在执行")};return@work actions.execute(plan)}catch(missing:CapabilityMissing){require(++attempt<=2){"能力生成仍需补充信息，输入已保存"};context.put("missingAction",missing.action);context.put("instruction","通过现有通用操作、声明式插件或原生构建实现缺失能力");plan=planner.plan(settings.ai(),input,context,state.value.image)}
+            }
+            @Suppress("UNREACHABLE_CODE") obj("message" to "已处理")
         }
     }
     fun clearPending() {update{it.copy(pending=null)}}
@@ -74,7 +84,19 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         }}
         days.map{(d,v)->obj("date" to d,"value" to v.toPlainString())}
     }
-    fun build(id:String)=work("正在提交构建") {val request=store.one("atlas_builds",id) ?: error("构建任务不存在");val result=BuildClient(settings).submit(JSONObject(request.s("request")));store.transact("提交云端构建"){store.put("atlas_builds",request.put("status",result.s("status")).put("remote_id",result.s("id")).put("detail",result.s("detail")).put("updated_at",now()));obj("message" to "构建请求已提交")}}
-    fun buildStatus(id:String)=work("正在查询构建") {val row=store.one("atlas_builds",id) ?: error("任务不存在");val result=BuildClient(settings).status(row.getString("remote_id"));store.transact("更新构建状态"){store.put("atlas_builds",row.put("status",result.s("status")).put("artifact_url",result.s("artifactUrl")).put("detail",result.s("detail")).put("updated_at",now()));obj("message" to result.s("status"))}}
+    fun installUpdate(feed:String)=work("正在验证与下载更新"){Updater(getApplication(),settings,store).downloadAndInstall(feed)}
+    fun build(id:String)=work("正在提交构建") {
+        val row=store.one("atlas_builds",id) ?: error("构建任务不存在");val spec=JSONObject(row.s("request"))
+        val result=if(settings.getSecret("github_build_token").isNotBlank())GitHubBuildClient(settings).submit(spec) else BuildClient(settings).submit(spec)
+        store.transact("提交云端构建"){store.put("atlas_builds",row.put("status",result.s("status")).put("remote_id",result.s("id")).put("detail",result.s("detail")).put("updated_at",now()));obj("message" to "构建请求已提交")}
+    }
+    fun buildStatus(id:String)=work("正在查询构建") {
+        val row=store.one("atlas_builds",id) ?: error("任务不存在");val remote=row.getString("remote_id");val result=if(remote.startsWith("gh:"))GitHubBuildClient(settings).status(remote) else BuildClient(settings).status(remote)
+        store.transact("更新构建状态"){val spec=JSONObject(row.s("request"));spec.put("previewUrl",result.s("previewUrl"));store.put("atlas_builds",row.put("request",spec.toString()).put("status",result.s("status")).put("artifact_url",result.s("artifactUrl")).put("detail",result.s("detail")).put("updated_at",now()));obj("message" to result.s("status"))}
+    }
+    fun installBuild(id:String)=work("正在下载签名安装包") {
+        val row=store.one("atlas_builds",id) ?: error("任务不存在");val remote=row.getString("remote_id");require(remote.startsWith("gh:")){ "请通过构建服务的更新入口安装" }
+        val apk=GitHubBuildClient(settings).downloadSigned(getApplication(),remote);Updater(getApplication(),settings,store).installArtifact(apk)
+    }
     override fun onCleared(){store.close()}
 }

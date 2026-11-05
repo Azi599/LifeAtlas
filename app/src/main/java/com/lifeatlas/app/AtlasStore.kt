@@ -102,7 +102,7 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         val revision=query("SELECT revision FROM atlas_revisions WHERE id=?",arrayOf(metric)).firstOrNull()?.optLong("revision") ?: 0L
         val cacheKey="$metric|$from|$to|$method|${ZoneId.systemDefault().id}"
         query("SELECT result FROM atlas_aggregates WHERE id=? AND revision=?",arrayOf(cacheKey,revision.toString())).firstOrNull()?.let{return JSONObject(it.s("result"))}
-        var count=0L;var sum=BigDecimal.ZERO;var weighted=BigDecimal.ZERO;var weights=BigDecimal.ZERO;var last:String?=null;var min:BigDecimal?=null;var max:BigDecimal?=null
+        var count=0L;var recordCount=0L;var weightedCount=0L;var sum=BigDecimal.ZERO;var weighted=BigDecimal.ZERO;var weights=BigDecimal.ZERO;var last:String?=null;var min:BigDecimal?=null;var max:BigDecimal?=null
         val distribution=ArrayList<BigDecimal>();val intervals=ArrayList<Pair<Long,Long>>()
         val lower=LocalDate.parse(from).atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
         val upper=LocalDate.parse(to).plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
@@ -110,13 +110,15 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         val where=if(union) "start_at IS NOT NULL AND end_at IS NOT NULL AND start_at<? AND end_at>?" else "local_date BETWEEN ? AND ?"
         val args=if(union) arrayOf(metric,Instant.ofEpochSecond(upper).toString(),Instant.ofEpochSecond(lower).toString()) else arrayOf(metric,from,to)
         readableDatabase.rawQuery("SELECT value,fields_json,start_at,end_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND $where ORDER BY local_date,occurred_at,created_at,id",args).use {c->while(c.moveToNext()) {
-            if(!c.isNull(0)) {val fields=JSONObject(c.getString(1));if(metricConfig.s("role") in setOf("income","expense") && fields.s("flow")=="transfer") continue;val v=normalizedValue(decimal(c.getString(0)),fields,metricConfig);count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
-                if(method=="WEIGHTED_MEAN") {val w=JSONObject(c.getString(1)).s("weight").takeIf{it.isNotEmpty()}?.let(::decimal);if(w!=null){require(w>=BigDecimal.ZERO);weighted+=v*w;weights+=w}}
+            val fields=JSONObject(c.getString(1));if(metricConfig.s("role") in setOf("income","expense") && fields.s("flow")=="transfer") continue
+            recordCount++
+            if(!c.isNull(0)) {val v=normalizedValue(decimal(c.getString(0)),fields,metricConfig);count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
+                if(method=="WEIGHTED_MEAN") {val w=JSONObject(c.getString(1)).s("weight").takeIf{it.isNotEmpty()}?.let(::decimal);if(w!=null){require(w>=BigDecimal.ZERO);weighted+=v*w;weights+=w;weightedCount++}}
             }
             if(method=="UNION_DURATION" && !c.isNull(2) && !c.isNull(3)) intervals.add(maxOf(lower,Instant.parse(c.getString(2)).epochSecond) to minOf(upper,Instant.parse(c.getString(3)).epochSecond))
         } }
-        val result=when(method){"SUM"->if(count==0L) null else sum;"COUNT"->count.toBigDecimal();"MEAN"->if(count==0L) null else sum.divide(count.toBigDecimal(),MathContext.DECIMAL128);"LAST_SNAPSHOT"->last?.toBigDecimal();"MIN"->min;"MAX"->max;"MEDIAN"->MathEngine.median(distribution);"WEIGHTED_MEAN"->if(weights.signum()==0) null else weighted.divide(weights,MathContext.DECIMAL128);"UNION_DURATION"->if(intervals.isEmpty()) null else MathEngine.union(intervals).toBigDecimal();else->null}
-        val report=obj("metricId" to metric,"method" to method,"value" to result?.stripTrailingZeros()?.toPlainString(),"count" to count,"sum" to sum.toPlainString(),"weightSum" to weights.toPlainString(),"weightedSum" to weighted.toPlainString(),"from" to from,"to" to to,"unit" to if(method=="UNION_DURATION") "秒" else metricConfig.s("unit"),"missing" to "缺失值不计入样本；时段并集只计算明确起止区间")
+        val result=when(method){"SUM"->if(count==0L) null else sum;"COUNT"->recordCount.toBigDecimal();"MEAN"->if(count==0L) null else sum.divide(count.toBigDecimal(),MathContext.DECIMAL128);"LAST_SNAPSHOT"->last?.toBigDecimal();"MIN"->min;"MAX"->max;"MEDIAN"->MathEngine.median(distribution);"WEIGHTED_MEAN"->if(weights.signum()==0) null else weighted.divide(weights,MathContext.DECIMAL128);"UNION_DURATION"->if(intervals.isEmpty()) null else MathEngine.union(intervals).toBigDecimal();else->null}
+        val report=obj("metricId" to metric,"method" to method,"value" to result?.stripTrailingZeros()?.toPlainString(),"count" to count,"recordCount" to recordCount,"missingCount" to recordCount-count,"usedCount" to if(method=="WEIGHTED_MEAN") weightedCount else count,"sum" to sum.toPlainString(),"weightSum" to weights.toPlainString(),"weightedSum" to weighted.toPlainString(),"from" to from,"to" to to,"unit" to if(method=="UNION_DURATION") "秒" else metricConfig.s("unit"),"missing" to "缺失值不计入样本；时段并集只计算明确起止区间")
         writableDatabase.insertWithOnConflict("atlas_aggregates",null,cv(obj("id" to cacheKey,"metric_id" to metric,"revision" to revision,"result" to report.toString())),SQLiteDatabase.CONFLICT_REPLACE)
         return report
     }
@@ -132,7 +134,12 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
     }
     fun exportCsv(writer:Writer) {
         fun q(x:String)="\""+x.replace("\"","\"\"")+"\""
-        writer.write("record_id,event_id,metric_id,kind,value,local_date,occurred_at,zone,fields_json\n")
-        readableDatabase.rawQuery("SELECT id,event_id,metric_id,kind,value,local_date,occurred_at,zone,fields_json FROM atlas_facts WHERE deleted=0 ORDER BY local_date,id",null).use{c->while(c.moveToNext()) writer.write((0..8).joinToString(","){q(c.getString(it) ?: "")}+"\n")};writer.flush()
+        writer.write("record_id,event_id,metric_id,kind,value,unit,local_date,occurred_at,start_at,end_at,zone,fields_json\n")
+        val definitions=hashMapOf<String,JSONObject>()
+        readableDatabase.rawQuery("SELECT id,event_id,metric_id,kind,value,local_date,occurred_at,start_at,end_at,zone,fields_json FROM atlas_facts WHERE deleted=0 ORDER BY local_date,id",null).use{c->while(c.moveToNext()) {
+            val definition=definitions.getOrPut(c.getString(2)){config(c.getString(2))};val fields=JSONObject(c.getString(10));val value=if(c.isNull(4)) "" else normalizedValue(decimal(c.getString(4)),fields,definition).toPlainString();fields.put("_unitVersion",definition.optInt("unitVersion",0))
+            val row=listOf(c.getString(0),c.getString(1),c.getString(2),c.getString(3),value,definition.s("unit"),c.getString(5),c.getString(6),c.getString(7),c.getString(8),c.getString(9),fields.toString())
+            writer.write(row.joinToString(","){q(it ?: "")}+"\n")
+        }};writer.flush()
     }
 }

@@ -22,7 +22,7 @@ def tap_text(text):
         time.sleep(1)
     raise RuntimeError('Missing navigation target '+text)
 
-adb('install','-r','app/build/outputs/apk/debug/app-debug.apk')
+adb('install','-r','app/build/outputs/apk/standalone/debug/app-standalone-debug.apk')
 adb('shell','wm','density','160')
 for width in [320,360,393,432]:
     for scale in ['1.0','1.5']:

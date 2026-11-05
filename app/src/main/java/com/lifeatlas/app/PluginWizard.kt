@@ -16,7 +16,7 @@ import org.json.JSONObject
         OutlinedTextField(title,{title=it},label={Text("功能名称")},modifier=Modifier.fillMaxWidth())
         metrics.forEachIndexed{i,m->OutlinedCard{Column(Modifier.padding(12.dp)){Text("${m.s("title")} · ${m.s("unit")}");TextButton(onClick={metrics=metrics.filterIndexed{index,_->index!=i}}){Text("移除")}}}}
         HorizontalDivider();OutlinedTextField(name,{name=it},label={Text("指标名称")},modifier=Modifier.fillMaxWidth());OutlinedTextField(unit,{unit=it},label={Text("单位")},modifier=Modifier.fillMaxWidth())
-        Pick("数据语义",kinds.map{it to kindName(it)},kind){kind=it;method=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
+        Pick("数据语义",kinds.map{it to kindName(it)},kind){kind=it;if(it=="ALLOCATION" && !Units.isTime(unit))unit="分钟";method=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
         Pick("统计方式",aggregateMethods.map{it to methodName(it)},method){method=it;if(it=="WEIGHTED_MEAN" && fields.none{f->f.s("id")=="weight"})fields=fields+obj("id" to "weight","title" to "权重","type" to "decimal","required" to true)}
         Pick("图表",listOf("line" to "折线","bar" to "柱形","heatmap" to "热力图"),chart){chart=it}
         fields.forEach{Text(it.s("title"))};TextButton(onClick={fieldDialog=true}){Text("增加字段")}

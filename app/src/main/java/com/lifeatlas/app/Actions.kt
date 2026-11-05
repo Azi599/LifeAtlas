@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.*
 
+class CapabilityMissing(val action:String):IllegalStateException("需要扩展操作能力")
 class Actions(val store:AtlasStore) {
     val catalog=linkedMapOf(
         "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,fields:[{id,title,type,required,options?}],expression?}",
@@ -81,7 +82,7 @@ class Actions(val store:AtlasStore) {
                 if(a.has("archived")) row.put("archived",if(a.getBoolean("archived")) 1 else 0)
                 row.put("revision",row.getLong("revision")+1);row.put("updated_at",now());store.put("atlas_objects",row);return obj("id" to row.s("id"))
             }
-            "atlas.createEvent" -> return obj("id" to event(a.getString("text")))
+            "atlas.createEvent" -> return obj("id" to event(a.getString("text"),a.s("id").ifEmpty{uid()}))
             "atlas.deleteObject" -> return dispatch("atlas.updateObject",obj("id" to a.getString("id"),"archived" to true))
             "atlas.copyObject" -> {val source=store.one("atlas_objects",a.getString("id")) ?: error("对象不存在");return dispatch("atlas.createObject",obj("type" to source.s("type"),"title" to a.s("title",source.s("title")+" 副本"),"parentId" to source.s("parent_id").ifEmpty{null},"config" to JSONObject(source.s("config"))))}
             "atlas.relate"->{val from=a.getString("fromId");val to=a.getString("toId");require(store.one("atlas_objects",from)!=null && store.one("atlas_objects",to)!=null);val id=uid();store.put("atlas_relations",obj("id" to id,"from_id" to from,"to_id" to to,"kind" to a.s("kind","related")));return obj("id" to id)}
@@ -91,7 +92,7 @@ class Actions(val store:AtlasStore) {
                 if(action=="atlas.editRecord") {
                     if(a.has("value")) {
                         val c=store.config(r.s("metric_id"));var v=a.s("value").ifEmpty{null}?.let(::decimal)
-                        if(JSONObject(r.s("fields_json")).s("flow")!="transfer"){if(c.s("role")=="expense")v=v?.abs()?.negate();if(c.s("role")=="income")v=v?.abs()}
+                        if(JSONObject(r.s("fields_json")).s("flow")!="transfer"){if(c.s("role")=="expense")v=if(JSONObject(r.s("fields_json")).s("flow")=="refund")v?.abs() else v?.abs()?.negate();if(c.s("role")=="income")v=v?.abs()}
                         if(c.s("kind")=="ALLOCATION")require(v==null || v>=BigDecimal.ZERO)
                         if(v!=null && c.s("role") in setOf("income","expense","balance"))v=v.setScale(c.optInt("decimalPlaces",2),java.math.RoundingMode.UNNECESSARY)
                         r.put("value",v?.toPlainString() ?: JSONObject.NULL)
@@ -103,7 +104,7 @@ class Actions(val store:AtlasStore) {
                 r.put("updated_at",now());r.put("revision",r.getLong("revision")+1);store.put("atlas_facts",r);indexFields(r);return obj("id" to r.s("id"))
             }
             "atlas.searchObjects" -> {val keyword=a.s("keyword");require(keyword.length<=100);return obj("objects" to JSONArray(store.query("SELECT * FROM atlas_objects WHERE archived=0 AND title LIKE ? ${if(a.s("type").isNotEmpty()) "AND type=?" else ""} ORDER BY title LIMIT 100 OFFSET ?",(listOf("%$keyword%")+listOfNotNull(a.s("type").ifEmpty{null})+a.optInt("offset").coerceAtLeast(0).toString()).toTypedArray())))}
-            "atlas.query" -> return obj("records" to JSONArray(store.facts(a.s("metricId").ifEmpty{null},a.s("from","0001-01-01"),a.s("to","9999-12-31"),a.optInt("offset"),a.optInt("limit",50).coerceAtMost(100))))
+            "atlas.query" -> return obj("metricId" to a.s("metricId"),"from" to a.s("from","0001-01-01"),"to" to a.s("to","9999-12-31"),"records" to JSONArray(store.facts(a.s("metricId").ifEmpty{null},a.s("from","0001-01-01"),a.s("to","9999-12-31"),a.optInt("offset"),a.optInt("limit",50).coerceAtMost(100))))
             "atlas.aggregate" -> return store.aggregate(a.getString("metricId"),a.getString("from"),a.getString("to"),a.s("method",store.config(a.getString("metricId")).s("aggregate","SUM")))
             "atlas.createView" -> {val components=a.getJSONArray("components");validateUi(components);return dispatch("atlas.createObject",obj("type" to "VIEW","title" to a.getString("title"),"parentId" to a.s("parentId").ifEmpty{null},"config" to obj("component" to "schema","components" to components)))}
             "atlas.report" -> {val results=JSONArray();a.getJSONArray("metrics").let{for(i in 0 until it.length()) results.put(store.aggregate(it.getString(i),a.getString("from"),a.getString("to")))};return dispatch("atlas.createObject",obj("type" to "VIEW","title" to a.s("title","统计报告"),"config" to obj("component" to "report","metrics" to a.getJSONArray("metrics"),"results" to results,"from" to a.s("from"),"to" to a.s("to"))))}
@@ -140,11 +141,11 @@ class Actions(val store:AtlasStore) {
             else -> {
                 val active=store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'")
                 active.forEach {row->val m=JSONObject(row.s("manifest"));(m.optJSONArray("actions") ?: JSONArray()).objects().firstOrNull{"${m.s("id")}.${it.s("id")}"==action}?.let{spec->val metricId=store.query("SELECT id FROM atlas_objects WHERE plugin_id=? AND type='METRIC'",arrayOf(m.s("id"))).firstOrNull{store.config(it.s("id")).s("key")==spec.s("metricKey")}?.s("id") ?: error("指标未加载");return dispatch("atlas.${spec.s("template")}",a.copyJson().put("metricId",metricId),raw)}}
-                error("能力未注册：$action")
+                throw CapabilityMissing(action)
             }
         }
     }
-    private fun event(raw:String):String {val id=uid();val t=now();store.put("atlas_events",obj("id" to id,"raw_input" to raw,"source" to "workspace","created_at" to t,"updated_at" to t,"zone" to ZoneId.systemDefault().id));return id}
+    private fun event(raw:String,id:String=uid()):String {require(id.length<=120);if(store.one("atlas_events",id)!=null)return id;val t=now();store.put("atlas_events",obj("id" to id,"raw_input" to raw,"source" to "workspace","created_at" to t,"updated_at" to t,"zone" to ZoneId.systemDefault().id));return id}
     private fun record(a:JSONObject,raw:String,runWorkflow:Boolean=true):JSONObject {
         val metric=a.getString("metricId");val owner=store.one("atlas_objects",metric) ?: error("指标不存在");require(owner.s("type")=="METRIC" && owner.optInt("archived")==0)
         val plugin=owner.s("plugin_id");if(plugin.isNotEmpty()) require(store.query("SELECT id FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE'",arrayOf(plugin)).isNotEmpty()) {"请先启用插件"}
@@ -154,12 +155,12 @@ class Actions(val store:AtlasStore) {
         var value=a.s("value").ifEmpty{null}?.let(::decimal)
         if(value!=null && a.s("unit").isNotEmpty()) value=Units.convert(value,a.s("unit"),c.s("unit"))
         if(c.has("expression")) value=Expressions.eval(c.getJSONObject("expression"),fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap())
-        if(fields.s("flow")!="transfer") {if(c.s("role")=="expense") value=value?.abs()?.negate();if(c.s("role")=="income") value=value?.abs()}
+        if(fields.s("flow")!="transfer") {if(c.s("role")=="expense") value=if(fields.s("flow")=="refund") value?.abs() else value?.abs()?.negate();if(c.s("role")=="income") value=value?.abs()}
         if(c.s("role") in setOf("income","expense","balance") && value!=null) {
             val places=c.optInt("decimalPlaces",2);require(places in 0..8);val exact=value.setScale(places,java.math.RoundingMode.UNNECESSARY);fields.put("_minorUnits",exact.movePointRight(places).toBigIntegerExact().toString());value=exact
         }
         val start=a.s("startAt").ifEmpty{null};val end=a.s("endAt").ifEmpty{null};val occurred=a.s("occurredAt").ifEmpty{null};val zone=a.s("zone",ZoneId.systemDefault().id);ZoneId.of(zone)
-        if(start!=null || end!=null){require(kind=="ALLOCATION" && start!=null && end!=null);require(Instant.parse(end)>=Instant.parse(start))}
+        if(start!=null || end!=null){require(kind=="ALLOCATION" && start!=null && end!=null);require(Instant.parse(end)>=Instant.parse(start));require(Instant.parse(start).atZone(ZoneId.of(zone)).toLocalDate().toString()==date){"时段开始日期与发生日期不一致"};val duration=Units.convert(Duration.between(Instant.parse(start),Instant.parse(end)).seconds.toBigDecimal(),"s",c.s("unit"));if(value==null)value=duration else require(value.compareTo(duration)==0){"时长与起止区间不一致"}}
         if(kind=="ALLOCATION") require(value==null || value>=BigDecimal.ZERO) {"时长不能为负"}
         if(occurred!=null) {require(Instant.parse(occurred).atZone(ZoneId.of(zone)).toLocalDate().toString()==date){"发生时刻与日期不一致"}}
         val e=a.s("eventId").ifEmpty{event(raw)};require(store.one("atlas_events",e)!=null);val id=a.s("recordId").ifEmpty{uid()};require(id.length<=120 && store.one("atlas_facts",id)==null){"记录标识已存在"};val t=now()
@@ -204,8 +205,8 @@ class Actions(val store:AtlasStore) {
                 val start=Instant.parse(p.getString("start"));val end=Instant.parse(p.getString("end"))
                 val pieces=if(config.s("role")=="sleep") listOf(start to end) else MathEngine.splitByDate(start,end,zone).keys.map{d->maxOf(start,d.atStartOfDay(zone).toInstant()) to minOf(end,d.plusDays(1).atStartOfDay(zone).toInstant())}
                 pieces.forEach{(a,b)->
-                    val seconds=Duration.between(a,b).seconds.toBigDecimal();val divisor=when(config.s("unit")){"h","小时"->3600;"min","分钟"->60;else->1}
-                    record(obj("eventId" to e,"metricId" to timer.s("metric_id"),"date" to a.atZone(zone).toLocalDate().toString(),"zone" to zone.id,"value" to seconds.divide(divisor.toBigDecimal(),java.math.MathContext.DECIMAL128).toPlainString(),"startAt" to a.toString(),"endAt" to b.toString()),"计时记录",false)
+                    val seconds=Duration.between(a,b).seconds.toBigDecimal();val amount=Units.convert(seconds,"s",config.s("unit"))
+                    record(obj("eventId" to e,"metricId" to timer.s("metric_id"),"date" to a.atZone(zone).toLocalDate().toString(),"zone" to zone.id,"value" to amount.toPlainString(),"startAt" to a.toString(),"endAt" to b.toString()),"计时记录",false)
                 }
             }
         }

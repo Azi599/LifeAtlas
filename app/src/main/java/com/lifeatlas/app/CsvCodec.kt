@@ -30,6 +30,8 @@ object CsvCodec {
                     val recordId=map["record_id"]?.takeIf{v->v.isNotEmpty()} ?: "csv:$hash:$number"
                     if(actions.store.one("atlas_facts",recordId)!=null){skip++}else{
                         val args=obj("recordId" to recordId,"metricId" to metric,"value" to map[valueColumn]?.ifEmpty{null},"date" to map[dateColumn],"fields" to JSONObject(map["fields_json"]?.ifEmpty{"{}"} ?: "{}"));map["occurred_at"]?.takeIf{v->v.isNotBlank()}?.let{v->args.put("occurredAt",v)};map["zone"]?.takeIf{v->v.isNotBlank()}?.let{v->args.put("zone",v)}
+                        map["unit"]?.takeIf{v->v.isNotBlank()}?.let{args.put("unit",it)};map["start_at"]?.takeIf{v->v.isNotBlank()}?.let{args.put("startAt",it)};map["end_at"]?.takeIf{v->v.isNotBlank()}?.let{args.put("endAt",it)}
+                        map["event_id"]?.takeIf{v->v.isNotBlank()}?.let{e->if(actions.store.one("atlas_events",e)==null)actions.dispatch("atlas.createEvent",obj("id" to e,"text" to "CSV 导入"));args.put("eventId",e)}
                         actions.dispatch("atlas.record",args,"CSV 导入");ok++
                     }
                 }}catch(e:Exception){bad++;val message=e.message ?: "无效记录";errors.write("$number,\"${message.replace("\"","\"\"")}\"\n");if(examples.length()<30)examples.put(obj("row" to number,"error" to message))}}

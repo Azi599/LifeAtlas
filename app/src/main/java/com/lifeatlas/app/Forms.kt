@@ -23,7 +23,7 @@ import java.time.LocalDate
         Pick("类型",listOf("WORKSPACE","FOLDER","PROJECT","METRIC","DASHBOARD").map{it to typeName(it)},type){type=it}
         OutlinedTextField(name,{name=it},label={Text("名称")},modifier=Modifier.fillMaxWidth())
         if(type=="METRIC") {
-            Pick("数据语义",kinds.map{it to kindName(it)},kind){kind=it;aggregate=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
+            Pick("数据语义",kinds.map{it to kindName(it)},kind){kind=it;if(it=="ALLOCATION" && !Units.isTime(unit))unit="分钟";aggregate=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
             OutlinedTextField(unit,{unit=it},label={Text("单位，如 kg、页、分钟")},modifier=Modifier.fillMaxWidth())
             Pick("统计方式",aggregateMethods.map{it to methodName(it)},aggregate){aggregate=it}
             Pick("专业规则",listOf("" to "通用指标","income" to "收入（正值）","expense" to "支出（负值）","balance" to "账户余额快照","sleep" to "睡眠时长"),role){role=it}
@@ -52,7 +52,7 @@ import java.time.LocalDate
         TextButton(onClick={vm.action("atlas.layout",obj("objectId" to o.s("id"),"position" to (position.toIntOrNull() ?: 0),"hidden" to hidden),"调整首页");onDismiss()}){Text("应用首页设置")}
         Pick("关联对象",objects.filter{it.s("id")!=o.s("id")}.map{it.s("id") to it.s("title")},relate){relate=it}
         if(relate.isNotEmpty())TextButton(onClick={vm.action("atlas.relate",obj("fromId" to o.s("id"),"toId" to relate,"kind" to "display"),"关联对象");onDismiss()}){Text("添加关联")}
-        TextButton(onClick={vm.action("atlas.updateObject",obj("id" to o.s("id"),"archived" to true),"归档${o.s("title")}");onDismiss()}){Text("归档（可撤销）")}
+        TextButton(onClick={vm.action("atlas.updateObject",obj("id" to o.s("id"),"archived" to (o.optInt("archived")==0)),"更新归档状态");onDismiss()}){Text(if(o.optInt("archived")==0) "归档" else "恢复归档")}
     }},confirmButton={TextButton(onClick={vm.action("atlas.updateObject",obj("id" to o.s("id"),"title" to title,"parentId" to parent.ifEmpty{null}),"更新${o.s("title")}");onDismiss()}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("关闭")}})
     if(field)FieldDialog(onDismiss={field=false},onSave={f->val c=JSONObject(o.s("config"));val fields=c.optJSONArray("fields") ?: JSONArray();fields.put(f);c.put("fields",fields);vm.action("atlas.updateObject",obj("id" to o.s("id"),"config" to c),"增加字段");field=false;onDismiss()})
 }
@@ -87,4 +87,18 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
 @Composable fun TextEventDialog(onDismiss:()->Unit,onSave:(String)->Unit) {
     var text by remember{mutableStateOf("")}
     AlertDialog(onDismissRequest=onDismiss,title={Text("记录事件")},text={OutlinedTextField(text,{text=it},label={Text("内容")},modifier=Modifier.fillMaxWidth(),minLines=3)},confirmButton={TextButton(enabled=text.isNotBlank(),onClick={onSave(text)}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+}
+
+@Composable fun FinanceDialog(objects:List<JSONObject>,balance:Boolean,onDismiss:()->Unit,onExecute:(String,JSONObject)->Unit) {
+    var from by remember{mutableStateOf("")};var to by remember{mutableStateOf("")};var amount by remember{mutableStateOf("")};var date by remember{mutableStateOf(LocalDate.now().toString())}
+    val snapshots=objects.filter{it.s("type")=="METRIC" && JSONObject(it.s("config")).s("kind")=="SNAPSHOT"};val changes=objects.filter{it.s("type")=="METRIC" && JSONObject(it.s("config")).s("kind")=="CHANGE"}
+    AlertDialog(onDismissRequest=onDismiss,title={Text(if(balance) "余额" else "转账")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Pick(if(balance) "实测余额指标" else "转出变化指标",(if(balance)snapshots else changes).map{it.s("id") to it.s("title")},from){from=it};Pick(if(balance) "关联变化指标" else "转入变化指标",changes.map{it.s("id") to it.s("title")},to){to=it};if(!balance)OutlinedTextField(amount,{amount=it},label={Text("金额")},modifier=Modifier.fillMaxWidth());OutlinedTextField(date,{date=it},label={Text(if(balance) "截止日期" else "发生日期")},modifier=Modifier.fillMaxWidth())
+    }},confirmButton={TextButton(enabled=from.isNotEmpty() && to.isNotEmpty() && (balance || amount.toBigDecimalOrNull()!=null),onClick={if(balance)onExecute("finance.balance",obj("snapshotMetricId" to from,"changeMetricIds" to JSONArray().put(to),"asOf" to date)) else onExecute("finance.transfer",obj("fromMetricId" to from,"toMetricId" to to,"amount" to amount,"date" to date))}){Text(if(balance) "计算" else "转账")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+}
+@Composable fun CorrelationDialog(objects:List<JSONObject>,onDismiss:()->Unit,onExecute:(JSONObject)->Unit) {
+    var x by remember{mutableStateOf("")};var y by remember{mutableStateOf("")};var from by remember{mutableStateOf(LocalDate.now().minusMonths(3).toString())};var to by remember{mutableStateOf(LocalDate.now().toString())};val metrics=objects.filter{it.s("type")=="METRIC"}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("相关性分析")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Pick("指标一",metrics.map{it.s("id") to it.s("title")},x){x=it};Pick("指标二",metrics.map{it.s("id") to it.s("title")},y){y=it};OutlinedTextField(from,{from=it},label={Text("开始日期")},modifier=Modifier.fillMaxWidth());OutlinedTextField(to,{to=it},label={Text("结束日期")},modifier=Modifier.fillMaxWidth())
+    }},confirmButton={TextButton(enabled=x.isNotEmpty() && y.isNotEmpty(),onClick={onExecute(obj("xMetricId" to x,"yMetricId" to y,"from" to from,"to" to to))}){Text("分析")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
 }

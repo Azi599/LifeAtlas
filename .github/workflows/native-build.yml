@@ -25,7 +25,7 @@ jobs:
           gradle-version: '8.9'
       - run: ./gradlew --version
       - name: Compile and unit test
-        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:assembleDebugAndroidTest -PatlasVersionCode=$((1000 + ${{ github.run_number }})) --stacktrace
+        run: ./gradlew :app:testStandaloneDebugUnitTest :app:assembleStandaloneRelease :app:bundlePlayRelease :app:assembleStandaloneDebugAndroidTest -PatlasVersionCode=$((1000 + ${{ github.run_number }})) --stacktrace
       - name: Enable KVM
         run: sudo chmod 666 /dev/kvm
       - uses: reactivecircus/android-emulator-runner@v2
@@ -34,11 +34,11 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+          script: ./gradlew :app:connectedStandaloneDebugAndroidTest --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-native-update
-          path: app/build/outputs/apk/release/*-unsigned.apk
+          path: app/build/outputs/apk/standalone/release/*-unsigned.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
