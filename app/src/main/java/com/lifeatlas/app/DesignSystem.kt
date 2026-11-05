@@ -90,6 +90,6 @@ val LocalAtlasBackground=staticCompositionLocalOf{Color.White}
 }
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable fun ActionRow(content:@Composable androidx.compose.foundation.layout.FlowRowScope.()->Unit) {
-    androidx.compose.foundation.layout.FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp),content=content)
+@Composable fun ActionRow(content:@Composable ()->Unit) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){content()}
 }
