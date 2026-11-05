@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,6 +56,8 @@ class MainActivity:ComponentActivity() {
                 val foreground=MaterialTheme.colorScheme.onBackground
                 val navigationForeground=MaterialTheme.colorScheme.onSurface
                 SideEffect {
+                    val transparent=android.graphics.Color.TRANSPARENT
+                    enableEdgeToEdge(statusBarStyle=if(foreground.luminance()<.5f)androidx.activity.SystemBarStyle.light(transparent,transparent)else androidx.activity.SystemBarStyle.dark(transparent),navigationBarStyle=if(navigationForeground.luminance()<.5f)androidx.activity.SystemBarStyle.light(transparent,transparent)else androidx.activity.SystemBarStyle.dark(transparent))
                     val status=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
                     val navigation=android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
                     val flags=(if(foreground.luminance()<.5f)status else 0) or (if(navigationForeground.luminance()<.5f)navigation else 0)
@@ -137,7 +140,7 @@ class MainActivity:ComponentActivity() {
                     items(state.operations.take(8),key={it.s("id")}) {op->Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)){Text(op.s("title"));Text(formatInstant(op.s("created_at")),style=MaterialTheme.typography.bodySmall);Text(if(op.optInt("undone")>0) "已撤销" else "已提交",style=MaterialTheme.typography.labelMedium);val result=JSONObject(op.s("result"));if(result.has("steps")) {val ids=linkedSetOf<String>();val steps=result.getJSONObject("steps");steps.keys().forEach{k->steps.optJSONObject(k)?.s("id")?.let(ids::add)};ids.filter{id->objects.any{it.s("id")==id}}.forEach{id->TextButton(onClick={open(id)}){Text("打开结果")}}}}}}
                 }
                 "spaces" -> {
-                    item{Text(chosen?.s("title") ?: "我的空间",style=MaterialTheme.typography.headlineSmall)}
+                    if(chosen?.s("type") !in setOf("METRIC","VIEW"))item{Text(chosen?.s("title") ?: "我的空间",style=MaterialTheme.typography.headlineSmall)}
                     item{Row{if(selected!=null) TextButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")};TextButton(onClick={create=true}){Text("新建")};if(chosen!=null) TextButton(onClick={edit=chosen}){Text("管理")}}}
                     if(chosen?.s("type")=="METRIC") {
                         item{MetricPanel(chosen,vm,state.revision,onRecord={record=chosen})}
