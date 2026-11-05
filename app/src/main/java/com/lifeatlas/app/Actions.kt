@@ -50,6 +50,8 @@ class Actions(val store:AtlasStore) {
         "finance.transfer" to "转账 args fromMetricId,toMetricId,amount,date；同币种两条关联变化，净额0",
         "atlas.capabilities" to "列出宿主及动态能力",
         "atlas.navigate" to "导航 args page(workspace/spaces/history/analytics/settings),objectId?",
+        "atlas.requestRollback" to "创建回退构建 args buildId；重新编译先前基线，保留数据并提高版本号",
+        "atlas.retryBuild" to "重新创建失败构建任务 args buildId",
         "atlas.requestBuild" to "保存原生能力构建请求 args title,requirements；云端构建服务连接后提交",
         "atlas.correlation" to "按日对齐两个指标 args xMetricId,yMetricId,from,to，缺失不补0，至少3对样本"
     )
@@ -188,6 +190,7 @@ class Actions(val store:AtlasStore) {
             }
             "atlas.capabilities" -> {val all=JSONObject(catalog);store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'").forEach{row->val m=JSONObject(row.s("manifest"));(m.optJSONArray("actions") ?: JSONArray()).objects().forEach{all.put("${m.s("id")}.${it.s("id")}",it)}};return obj("actions" to all)}
             "atlas.navigate" -> return obj("page" to a.s("page","spaces"),"objectId" to a.s("objectId"))
+            "atlas.requestRollback","atlas.retryBuild"->{val row=store.one("atlas_builds",a.getString("buildId")) ?: error("构建任务不存在");val spec=JSONObject(row.s("request"));if(action=="atlas.requestRollback"){val commit=spec.s("baselineCommit");require(commit.matches(Regex("[a-f0-9]{40}"))){"此构建尚未保存可回退基线"};spec.put("kind","rollback").put("sourceCommit",commit).put("title","回退 · "+spec.s("title"))};spec.put("previousBuildId",row.s("id"));return dispatch("atlas.requestBuild",spec)}
             "atlas.requestBuild" -> {val id=uid();store.put("atlas_builds",obj("id" to id,"request" to a.toString(),"status" to "AWAITING_SERVICE","remote_id" to null,"artifact_url" to null,"detail" to "","created_at" to now(),"updated_at" to now()));return obj("id" to id,"status" to "AWAITING_SERVICE")}
             "atlas.correlation" -> {
                 fun byDay(id:String):Map<String,Double> = store.dailySeries(id,a.getString("from"),a.getString("to")).mapNotNull{p->p.s("value").toDoubleOrNull()?.takeIf{it.isFinite()}?.let{p.s("date") to it}}.toMap()

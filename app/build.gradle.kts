@@ -5,12 +5,12 @@ plugins {
 }
 android {
     namespace = "com.lifeatlas.app"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.lifeatlas.app.newhost"
         minSdk = 31
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        targetSdk = 35
+        targetSdk = 36
         versionCode = providers.gradleProperty("atlasVersionCode").orElse("2").get().toInt()
         versionName = "0.2.0-dev"
     }

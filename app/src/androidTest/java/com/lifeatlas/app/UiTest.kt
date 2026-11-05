@@ -32,6 +32,7 @@ class UiTest {
     }
     @Test fun themeEditorPreviewAndRestartRender() {
         var vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        if(vm.store.metrics().none{it.s("title")=="浇水量"}){val m=obj("id" to "ui.seed","title" to "植物观察","version" to 1,"metrics" to JSONArray().put(obj("key" to "water","title" to "浇水量","kind" to "CHANGE","unit" to "ml","aggregate" to "SUM")));vm.actions.single("atlas.installPlugin",obj("manifest" to m),confirmed=true);val id=vm.store.metrics().first{it.s("title")=="浇水量"}.s("id");vm.actions.single("atlas.record",obj("metricId" to id,"value" to "250","date" to java.time.LocalDate.now().toString()))}
         runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()};rule.waitForIdle();capture("default-home.png")
         rule.onNodeWithText("记录").performClick();capture("records.png")
         rule.onNodeWithText("显示：记录").performClick();rule.onNodeWithText("时间轴").performClick();capture("timeline.png")

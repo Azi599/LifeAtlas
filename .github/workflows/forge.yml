@@ -9,6 +9,9 @@ on:
       request_json:
         required: true
         description: JSON feature requirements
+concurrency:
+  group: forge-${{ inputs.request_id }}
+  cancel-in-progress: false
 permissions:
   contents: write
   actions: write

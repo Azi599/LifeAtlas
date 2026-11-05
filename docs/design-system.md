@@ -11,3 +11,5 @@
 图标打包脚本只去除与边界连接的黑色外部底片，人物与背景内部像素不重绘。提供512px基础图、各密度Launcher、Adaptive前背景及Android13单色层。IconGallery用Android Canvas渲染不同遮罩，验收截图来自运行中的应用。
 
 验收材料：默认首页、记录、时间轴、分析、插件生成预览、主题编辑器、调色盘、自定义渐变、深色、图标遮罩；320/360/393/432dp和字体100%/150%，横屏与键盘。每张截图需检查后记录具体问题。编译通过只代表构建成功，不代表视觉验收通过。
+
+发行目标按2026年11月政策核对为API36；工具链AGP8.10.1/Gradle8.11.1。来源：https://developer.android.com/google/play/requirements/target-sdk 和 https://developer.android.com/build/releases/agp-8-10-0-release-notes 。Adaptive层108dp、核心安全区66dp，原图脸部位于安全区；外围发丝和背景允许随系统遮罩裁切。来源：https://developer.android.com/develop/ui/compose/system/icon_design_adaptive 。

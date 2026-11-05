@@ -84,6 +84,13 @@ def validate_changes(changes):
         seen.add(path)
     return changes
 
+def validate_dependencies(dependencies):
+    if not isinstance(dependencies,list) or len(dependencies)>10:raise ValueError("Too many dependency changes")
+    for dependency in dependencies:
+        if dependency.get("configuration") not in {"implementation","testImplementation","androidTestImplementation"}:raise ValueError("Invalid dependency scope")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+",dependency.get("notation","")):raise ValueError("Expected pinned Maven coordinates")
+    return dependencies
+
 def generate(spec, tree):
     if not AI_KEY:
         raise ValueError("AI_API_KEY not configured")
@@ -98,13 +105,19 @@ def generate(spec, tree):
             if total > 350_000:
                 break
             sources.append({"path": path, "content": content})
-    instructions = "Implement the requested native Android feature in this Kotlin/Compose app. Use existing Actions and data contracts. Return JSON {summary,changes:[{path,content}]} containing full file contents. Include meaningful tests. Only app/src/main/java, app/src/main/res, app/src/test/java, app/src/androidTest/java and AndroidManifest.xml may change. Preserve data and migrations. No generated progress or fake results. Sources: " + json.dumps(sources)
+    instructions = "Implement the requested native Android feature in this Kotlin/Compose app. Use existing Actions and data contracts. Return JSON {summary,changes:[{path,content}]} containing full file contents. Include meaningful tests. Optional dependencies:[{configuration,notation}] must use pinned group:artifact:version coordinates; the host will apply them. Do not edit Gradle directly. Only app/src/main/java, app/src/main/res, app/src/test/java, app/src/androidTest/java and AndroidManifest.xml may change. Preserve data and migrations. No generated progress or fake results. Sources: " + json.dumps(sources)
     result = request_json(AI_ENDPOINT, AI_KEY, "POST", {"model": AI_MODEL, "messages": [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(spec)}], "temperature": 0.1})
     text = result["choices"][0]["message"]["content"].strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
     result = json.loads(text)
     validate_changes(result.get("changes"))
+    dependencies=validate_dependencies(result.get("dependencies",[]))
+    if dependencies:
+        gradle=next(item for item in tree['tree'] if item['path']=='app/build.gradle.kts')
+        source=base64.b64decode(github('git/blobs/'+gradle['sha'])['content']).decode()
+        additions='\n'.join('    '+d['configuration']+'("'+d['notation']+'")' for d in dependencies)
+        result['changes'].append({'path':'app/build.gradle.kts','content':source+'\n// Native feature dependencies\ndependencies {\n'+additions+'\n}\n'})
     return result
 
 def process(job_id):

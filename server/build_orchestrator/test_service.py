@@ -10,6 +10,10 @@ class BuildServiceTest(unittest.TestCase):
         for path in ["../../secret", ".github/workflows/build.yml", "app/build.gradle.kts", "/app/src/main/java/Evil.kt", "app/src/main/java/../../bad"]:
             with self.assertRaises(ValueError):
                 service.validate_changes([{"path":path,"content":"x"}])
+    def test_dependencies_are_pinned_coordinates(self):
+        self.assertEqual(1,len(service.validate_dependencies([{"configuration":"implementation","notation":"androidx.camera:camera-core:1.4.2"}])))
+        for notation in ['https://host/file.jar','group:artifact:+','group:artifact:1.0);exec()']:
+            with self.assertRaises(ValueError):service.validate_dependencies([{"configuration":"implementation","notation":notation}])
     def test_restarted_jobs_remain_visible(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(service, "DATABASE", os.path.join(directory,"jobs.db")):
             service.initialize()

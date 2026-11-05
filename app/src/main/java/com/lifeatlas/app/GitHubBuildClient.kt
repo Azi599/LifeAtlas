@@ -19,15 +19,23 @@ class GitHubBuildClient(private val settings:Settings) {
         }finally{c.disconnect()}
     }
     fun submit(spec:JSONObject,requestId:String=uid()):JSONObject {
-        val id=requestId.replace("-","");api("actions/workflows/forge.yml/dispatches",obj("ref" to settings.prefs.getString("build_branch","main"),"inputs" to obj("request_id" to id,"request_json" to spec.toString())))
-        return obj("id" to "gh:$id","status" to "SUBMITTED","detail" to "GitHub 已接收扩展任务")
+        val id=requestId.replace("-","");require(id.matches(Regex("[a-f0-9]{32}")))
+        val base=settings.prefs.getString("build_branch","main")!!
+        val baseline=api("git/ref/heads/"+java.net.URLEncoder.encode(base,"UTF-8")).getJSONObject("object").getString("sha")
+        if(spec.s("kind")=="rollback") {
+            val commit=spec.getString("sourceCommit");require(commit.matches(Regex("[a-f0-9]{40}")))
+            val branch="native/"+id;api("git/refs",obj("ref" to "refs/heads/"+branch,"sha" to commit))
+            api("actions/workflows/native-build.yml/dispatches",obj("ref" to branch,"inputs" to obj("request_id" to id)))
+        }else api("actions/workflows/forge.yml/dispatches",obj("ref" to base,"inputs" to obj("request_id" to id,"request_json" to spec.toString())))
+        return obj("id" to "gh:"+id,"status" to "SUBMITTED","baselineCommit" to baseline,"detail" to "GitHub 已接收扩展任务")
     }
+
     fun status(remoteId:String):JSONObject {
         val id=remoteId.removePrefix("gh:");require(id.matches(Regex("[a-f0-9]{32}")))
         val branch="native/$id";val runs=api("actions/runs?branch=native%2F$id&event=workflow_dispatch&per_page=10").getJSONArray("workflow_runs").objects()
         val native=runs.firstOrNull{it.s("path")==".github/workflows/native-build.yml"}
         val preview="https://github.com/$repo/compare/${settings.prefs.getString("build_branch","main")}...$branch"
-        if(native!=null){val state=when(native.s("status")){"completed"->if(native.s("conclusion")=="success") "READY_FOR_REVIEW" else "FAILED";"waiting","pending"->"WAITING_APPROVAL";else->"BUILDING"};return obj("id" to remoteId,"status" to state,"detail" to (native.s("conclusion").ifEmpty{native.s("status")}),"artifactUrl" to native.s("html_url"),"previewUrl" to preview,"runId" to native.getLong("id"))}
+        if(native!=null){val state=when(native.s("status")){"completed"->if(native.s("conclusion")=="success") "READY_FOR_REVIEW" else "FAILED";"waiting","pending"->"WAITING_APPROVAL";else->"BUILDING"};return obj("id" to remoteId,"status" to state,"detail" to (native.s("conclusion").ifEmpty{native.s("status")}),"artifactUrl" to native.s("html_url"),"previewUrl" to preview,"runId" to native.getLong("id"),"commit" to native.s("head_sha"))}
         val forge=api("actions/workflows/forge.yml/runs?event=workflow_dispatch&per_page=100").getJSONArray("workflow_runs").objects().firstOrNull{it.s("display_title")=="Forge $id"}
         val status=if(forge==null) "SUBMITTED" else if(forge.s("status")=="completed" && forge.s("conclusion")!="success") "FAILED" else "GENERATING"
         return obj("id" to remoteId,"status" to status,"detail" to (forge?.s("conclusion")?.ifEmpty{forge?.s("status").orEmpty()} ?: "已提交"),"previewUrl" to preview,"artifactUrl" to forge?.s("html_url"))
