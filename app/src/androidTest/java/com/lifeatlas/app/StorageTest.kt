@@ -99,4 +99,19 @@ class StorageTest {
         assertEquals("65.5",db.facts(id).first().s("value"));assertEquals(7,db.readableDatabase.version);assertTrue(db.query("SELECT * FROM atlas_versions").isNotEmpty());assertEquals("lavender",ThemeRepository(db).current().s("id"))
     }
 
+    @Test fun pluginInstallsVersionedWorkflowAndUpgradePreviewCountsHistory() {
+        val manifest=obj("id" to "workflow.test","title" to "花园观测","version" to 1,"metrics" to JSONArray().put(obj("key" to "source","title" to "观测量","kind" to "CHANGE","unit" to "次","aggregate" to "SUM")).put(obj("key" to "target","title" to "合计量","kind" to "CHANGE","unit" to "次","aggregate" to "SUM")),"workflows" to JSONArray().put(obj("key" to "copy","title" to "关联同步","triggerMetricKey" to "source","spec" to obj("steps" to JSONArray().put(obj("actionId" to "atlas.record","args" to obj("metricId" to obj("\$metric" to "target"),"value" to obj("\$ref" to "record.value"),"date" to obj("\$ref" to "record.date"),"eventId" to obj("\$ref" to "record.eventId"))))))))
+        val result=actions.single("atlas.installPlugin",obj("manifest" to manifest),confirmed=true).getJSONObject("steps").getJSONObject("result");val ids=result.getJSONObject("metricIds")
+        actions.single("atlas.record",obj("metricId" to ids.s("source"),"value" to "3","date" to "2026-11-05"))
+        assertEquals("3",db.facts(ids.s("target")).first().s("value"));assertEquals(db.facts(ids.s("source")).first().s("event_id"),db.facts(ids.s("target")).first().s("event_id"))
+        manifest.put("version",2);val preview=actions.single("atlas.updatePlugin",obj("manifest" to manifest));assertEquals("PREVIEW",preview.s("status"));assertEquals(1L,preview.getJSONObject("plan").getJSONArray("impact").getJSONObject(0).getLong("count"))
+        actions.single("atlas.updatePlugin",obj("manifest" to manifest),confirmed=true);assertEquals(2,JSONObject(db.query("SELECT spec FROM atlas_workflows").first().s("spec")).getInt("version"))
+    }
+
+    @Test fun editingAndDeletingTransferMaintainsBothLegs() {
+        val from=metric("CHANGE","SUM");val to=metric("CHANGE","SUM");actions.single("finance.transfer",obj("fromMetricId" to from,"toMetricId" to to,"amount" to "500","date" to "2026-11-04"))
+        val id=db.facts(from).first().s("id");actions.single("atlas.editRecord",obj("id" to id,"value" to "-300","date" to "2026-11-05"));assertEquals("300",db.facts(to).first().s("value"));assertEquals("2026-11-05",db.facts(to).first().s("local_date"));db.undo();assertEquals("500",db.facts(to).first().s("value"))
+        actions.single("atlas.deleteRecord",obj("id" to id));assertTrue(db.facts(from).isEmpty() && db.facts(to).isEmpty());db.undo();assertEquals(1,db.facts(from).size);assertEquals(1,db.facts(to).size)
+    }
+
 }

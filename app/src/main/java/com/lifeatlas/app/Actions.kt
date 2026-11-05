@@ -41,7 +41,9 @@ class Actions(val store:AtlasStore) {
         "atlas.setPluginStatus" to "启停已安装插件 args pluginId,enabled",
         "atlas.rollbackPlugin" to "回退插件上一版本 args pluginId；通过操作历史同步恢复配置和记录",
         "atlas.layout" to "设置首页对象卡 args objectId,position,hidden",
-        "atlas.workflow" to "注册版本化工作流 args title,spec={triggerMetricId,condition?:表达式,steps:[{actionId,args}]}，保存记录时执行一次",
+        "atlas.setWorkflowStatus" to "启停工作流 args id,enabled",
+        "atlas.deleteWorkflow" to "删除工作流 args id，可撤销",
+        "atlas.workflow" to "创建或升级版本化工作流 args id?,title,spec={triggerMetricId,condition?:表达式,steps:[{actionId,args}]}，保存记录时执行一次",
         "time.start" to "开始计时 args metricId（ALLOCATION）",
         "time.pause" to "暂停 args timerId",
         "time.resume" to "恢复 args timerId",
@@ -67,11 +69,12 @@ class Actions(val store:AtlasStore) {
         val keys=hashSetOf<String>();metrics.objects().forEach{require(it.s("key").isNotBlank() && keys.add(it.s("key"))) {"指标 key 重复"};validateMetric(it)}
         (m.optJSONArray("views") ?: JSONArray()).objects().forEach{require(it.s("metricKey") in keys && it.s("chart","line") in setOf("line","bar","heatmap","list")) {"图表定义不合法"}}
         (m.optJSONArray("screens") ?: JSONArray()).objects().forEach{screen->validateUi(screen.getJSONArray("components"));screen.getJSONArray("components").objects().forEach{component->if(component.has("metricKey"))require(component.s("metricKey") in keys)}}
+        (m.optJSONArray("workflows") ?: JSONArray()).objects().forEach{w->val spec=w.optJSONObject("spec") ?: w;require(w.s("triggerMetricKey",spec.s("triggerMetricKey")) in keys){"工作流触发指标不存在"};require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10){"工作流需包含1至10步"}}
         (m.optJSONArray("actions") ?: JSONArray()).objects().forEach{require(it.s("metricKey") in keys && it.s("template") in setOf("record","query","aggregate")) {"动作模板不合法"}}
     }
     fun execute(plan:JSONObject,confirmed:Boolean=false):JSONObject {
         val steps=plan.getJSONArray("steps");require(steps.length() in 1..60)
-        if(!confirmed && (steps.objects().any{it.s("actionId") in setOf("atlas.installPlugin","atlas.updatePlugin","atlas.rollbackPlugin")} || steps.objects().count{it.s("actionId") in setOf("atlas.deleteRecord","atlas.deleteObject")}>10)) return obj("status" to "PREVIEW","plan" to plan)
+        if(!confirmed && (steps.objects().any{it.s("actionId") in setOf("atlas.installPlugin","atlas.updatePlugin","atlas.rollbackPlugin")} || steps.objects().count{it.s("actionId") in setOf("atlas.deleteRecord","atlas.deleteObject")}>10)) return obj("status" to "PREVIEW","plan" to plan.copyJson().put("impact",pluginImpact(steps)))
         val refs=linkedMapOf<String,JSONObject>();val request=plan.s("requestId").ifEmpty{uid()};require(request.length<=160)
         store.one("atlas_operations",request)?.let{return JSONObject(it.s("result"))}
         val hasExternal=steps.objects().any{it.s("actionId") in ExternalActions.ids}
@@ -130,8 +133,9 @@ class Actions(val store:AtlasStore) {
             "atlas.editRecord","atlas.deleteRecord","atlas.restoreRecord" -> {
                 val r=store.one("atlas_facts",a.getString("id")) ?: error("记录不存在")
                 if(action=="atlas.editRecord") {
-                    val c=store.config(r.s("metric_id"));val fields=JSONObject(r.s("fields_json"))
+                    val c=store.config(r.s("metric_id"));val fields=JSONObject(r.s("fields_json"));val transferGroup=if(fields.s("flow")=="transfer")fields.s("transferGroup")else ""
                     if(a.has("fields")){val supplied=a.getJSONObject("fields");supplied.keys().forEach{key->if(!key.startsWith("_"))fields.put(key,supplied.get(key))};validateFields(c,fields,a.optBoolean("allowIncomplete"))}
+                    if(transferGroup.isNotEmpty())fields.put("flow","transfer").put("transferGroup",transferGroup)
                     val recompute=c.has("expression") && a.has("fields")
                     if(a.has("value") || recompute) {
                         var v=if(recompute)Expressions.eval(c.getJSONObject("expression"),fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap())else a.s("value").ifEmpty{null}?.let(::decimal)
@@ -149,7 +153,19 @@ class Actions(val store:AtlasStore) {
                     if(r.s("occurred_at").isNotEmpty())require(Instant.parse(r.s("occurred_at")).atZone(ZoneId.of(r.s("zone"))).toLocalDate().toString()==r.s("local_date")){"发生日期与原时刻不一致"}
                     r.put("fields_json",fields.toString())
                 } else r.put("deleted",if(action=="atlas.deleteRecord") 1 else 0)
-                r.put("updated_at",now());r.put("revision",r.getLong("revision")+1);store.put("atlas_facts",r);indexFields(r);return obj("id" to r.s("id"))
+                r.put("updated_at",now());r.put("revision",r.getLong("revision")+1);store.put("atlas_facts",r);indexFields(r)
+                val transferFields=JSONObject(r.s("fields_json"))
+                if(transferFields.s("flow")=="transfer") {
+                    val group=transferFields.s("transferGroup");val legs=store.query("SELECT * FROM atlas_facts WHERE event_id=?",arrayOf(r.s("event_id"))).filter{JSONObject(it.s("fields_json")).s("transferGroup")==group};require(legs.size==2){"转账需要两条关联变化"}
+                    val peer=legs.first{it.s("id")!=r.s("id")};peer.put("deleted",r.getInt("deleted"))
+                    if(action=="atlas.editRecord"){
+                        require(r.s("value").isNotEmpty()){"转账金额不能为空"};val sourceConfig=store.config(r.s("metric_id"));val peerConfig=store.config(peer.s("metric_id"));val amount=normalizedValue(decimal(r.s("value")),transferFields,sourceConfig)
+                        val other=Units.convert(amount,sourceConfig.s("unit"),peerConfig.s("unit")).negate();peer.put("value",other.toPlainString()).put("local_date",r.s("local_date"));val pf=JSONObject(peer.s("fields_json")).put("_unitVersion",peerConfig.optInt("unitVersion",0));if(peerConfig.s("role") in setOf("income","expense","balance","accountChange"))pf.put("_minorUnits",other.movePointRight(peerConfig.optInt("decimalPlaces",2)).toBigIntegerExact().toString());peer.put("fields_json",pf.toString())
+                        peer.put("occurred_at",r.opt("occurred_at") ?: JSONObject.NULL).put("precision",r.s("precision"))
+                    }
+                    peer.put("updated_at",now()).put("revision",peer.getLong("revision")+1);store.put("atlas_facts",peer);indexFields(peer)
+                }
+                return obj("id" to r.s("id"))
             }
             "atlas.searchObjects" -> {val keyword=a.s("keyword");require(keyword.length<=100);return obj("objects" to JSONArray(store.query("SELECT * FROM atlas_objects WHERE archived=0 AND title LIKE ? ${if(a.s("type").isNotEmpty()) "AND type=?" else ""} ORDER BY title LIMIT 100 OFFSET ?",(listOf("%$keyword%")+listOfNotNull(a.s("type").ifEmpty{null})+a.optInt("offset").coerceAtLeast(0).toString()).toTypedArray())))}
             "atlas.query" -> return obj("metricId" to a.s("metricId"),"from" to a.s("from","0001-01-01"),"to" to a.s("to","9999-12-31"),"records" to JSONArray(store.facts(a.s("metricId").ifEmpty{null},a.s("from","0001-01-01"),a.s("to","9999-12-31"),a.optInt("offset"),a.optInt("limit",50).coerceAtMost(100))))
@@ -166,7 +182,13 @@ class Actions(val store:AtlasStore) {
                 return install(target,true)
             }
             "atlas.layout" -> {val id=a.getString("objectId");require(store.one("atlas_objects",id)!=null);store.put("atlas_layout",obj("id" to id,"object_id" to id,"position" to a.optInt("position"),"hidden" to if(a.optBoolean("hidden")) 1 else 0));return obj("id" to id)}
-            "atlas.workflow" -> {val spec=a.getJSONObject("spec");require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10);val id=uid();store.put("atlas_workflows",obj("id" to id,"title" to a.getString("title"),"spec" to spec.toString(),"enabled" to 1));return obj("id" to id)}
+            "atlas.workflow" -> {
+                val spec=a.getJSONObject("spec").copyJson();require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10);require(store.one("atlas_objects",spec.getString("triggerMetricId"))?.s("type")=="METRIC"){"触发指标不存在"}
+                val id=a.s("id").ifBlank{uid()};require(id.length<=180);val before=store.one("atlas_workflows",id);spec.put("version",(before?.let{JSONObject(it.s("spec")).optInt("version",1)} ?: 0)+1)
+                store.put("atlas_workflows",obj("id" to id,"title" to a.getString("title"),"spec" to spec.toString(),"enabled" to (before?.optInt("enabled") ?: 1)));return obj("id" to id,"version" to spec.optInt("version"))
+            }
+            "atlas.setWorkflowStatus"->{val row=store.one("atlas_workflows",a.getString("id")) ?: error("工作流不存在");store.put("atlas_workflows",row.put("enabled",if(a.getBoolean("enabled"))1 else 0));return obj("id" to row.s("id"))}
+            "atlas.deleteWorkflow"->{store.remove("atlas_workflows",a.getString("id"));return obj("message" to "工作流已删除")}
             "time.start","time.pause","time.resume","time.stop" -> return timer(action,a)
             "finance.balance" -> {
                 val anchorId=a.getString("snapshotMetricId");val definition=store.config(anchorId);require(definition.s("kind")=="SNAPSHOT");val to=a.s("asOf",LocalDate.now().toString());LocalDate.parse(to)
@@ -202,6 +224,16 @@ class Actions(val store:AtlasStore) {
                 throw CapabilityMissing(action)
             }
         }
+    }
+    private fun pluginImpact(steps:JSONArray):JSONArray {
+        val result=JSONArray()
+        steps.objects().forEach{step->val manifest=step.optJSONObject("args")?.optJSONObject("manifest") ?: return@forEach;val plugin=manifest.s("id")
+            val existing=store.query("SELECT id,title,config FROM atlas_objects WHERE plugin_id=? AND type='METRIC'",arrayOf(plugin))
+            (manifest.optJSONArray("metrics") ?: JSONArray()).objects().forEach{next->val old=existing.firstOrNull{JSONObject(it.s("config")).s("key")==next.s("key")} ?: return@forEach
+                val count=store.query("SELECT COUNT(*) n FROM atlas_facts WHERE metric_id=? AND deleted=0",arrayOf(old.s("id"))).first().getLong("n")
+                result.put(obj("title" to next.s("title"),"count" to count,"oldUnit" to JSONObject(old.s("config")).s("unit"),"newUnit" to next.s("unit"),"factor" to next.s("migrationFactor")))
+            }
+        };return result
     }
     private fun event(raw:String,id:String=uid(),date:String?=null,occurred:String?=null,zone:String=ZoneId.systemDefault().id):String {
         require(id.length<=120 && raw.length<=100000);if(store.one("atlas_events",id)!=null)return id
@@ -249,7 +281,7 @@ class Actions(val store:AtlasStore) {
             if(prev==null) ids[key]=dispatch("atlas.createObject",obj("type" to "METRIC","title" to c.getString("title"),"parentId" to parent,"pluginId" to plugin,"config" to c)).getString("id")
             else {val before=JSONObject(prev.s("config"));require(before.s("kind")==c.s("kind")){"不能改变历史指标语义"};val id=prev.s("id");ids[key]=id
                 val conversions=before.optJSONArray("conversions") ?: JSONArray();var unitVersion=before.optInt("unitVersion",0)
-                if(before.s("unit")!=c.s("unit")){val factor=decimal(c.getString("migrationFactor"));require(factor>BigDecimal.ZERO);unitVersion++;conversions.put(obj("version" to unitVersion,"factor" to factor.toPlainString(),"from" to before.s("unit"),"to" to c.s("unit")))}
+                if(before.s("unit")!=c.s("unit")){val factor=decimal(c.getString("migrationFactor"));require(factor>BigDecimal.ZERO);if(Units.dimension(before.s("unit"))!=null && Units.dimension(c.s("unit"))!=null)require(Units.convert(BigDecimal.ONE,before.s("unit"),c.s("unit")).compareTo(factor)==0){"单位转换系数不正确"};unitVersion++;conversions.put(obj("version" to unitVersion,"factor" to factor.toPlainString(),"from" to before.s("unit"),"to" to c.s("unit")))}
                 c.put("unitVersion",unitVersion);c.put("conversions",conversions)
                 prev.put("config",c.toString());prev.put("title",c.getString("title"));prev.put("revision",prev.getLong("revision")+1);prev.put("updated_at",now());store.put("atlas_objects",prev)
             }
@@ -258,6 +290,10 @@ class Actions(val store:AtlasStore) {
         if(upgrade) store.query("SELECT * FROM atlas_objects WHERE plugin_id=? AND type='VIEW' AND archived=0",arrayOf(plugin)).forEach{store.put("atlas_objects",it.put("archived",1).put("updated_at",now()))}
         val views=m.optJSONArray("views") ?: JSONArray();views.objects().forEach{v->dispatch("atlas.createObject",obj("type" to "VIEW","title" to v.s("title","趋势"),"parentId" to parent,"pluginId" to plugin,"config" to obj("component" to "chart","metricId" to ids.getValue(v.getString("metricKey")),"chart" to v.s("chart","line"))))}
         (m.optJSONArray("screens") ?: JSONArray()).objects().forEach{screen->val components=JSONArray(screen.getJSONArray("components").toString());components.objects().forEach{c->if(c.has("metricKey"))c.put("metricId",ids.getValue(c.getString("metricKey")))};dispatch("atlas.createObject",obj("type" to "VIEW","title" to screen.s("title","页面"),"parentId" to parent,"pluginId" to plugin,"config" to obj("component" to "schema","components" to components)))}
+        val prefix="plugin:"+plugin+":workflow:"
+        store.query("SELECT * FROM atlas_workflows WHERE substr(id,1,?)=?",arrayOf(prefix.length.toString(),prefix)).forEach{store.put("atlas_workflows",it.put("enabled",0))}
+        fun bind(value:Any):Any=when(value){is JSONObject->if(value.has("\$metric"))ids.getValue(value.getString("\$metric"))else JSONObject().apply{value.keys().forEach{put(it,bind(value.get(it)))}};is JSONArray->JSONArray().apply{for(i in 0 until value.length())put(bind(value.get(i)))};else->value}
+        (m.optJSONArray("workflows") ?: JSONArray()).objects().forEachIndexed{i,w->val spec=bind(w.optJSONObject("spec") ?: w) as JSONObject;spec.put("triggerMetricId",ids.getValue(w.s("triggerMetricKey",spec.s("triggerMetricKey"))));val id=prefix+w.s("key",i.toString());dispatch("atlas.workflow",obj("id" to id,"title" to w.s("title","工作流"),"spec" to spec));val saved=store.one("atlas_workflows",id)!!;store.put("atlas_workflows",saved.put("enabled",1))}
         return obj("id" to parent,"pluginId" to plugin,"version" to version,"metricIds" to JSONObject(ids))
     }
     private fun timer(action:String,a:JSONObject):JSONObject {

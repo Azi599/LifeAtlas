@@ -29,6 +29,7 @@ fun validateMetric(config:JSONObject) {
     require(fields.length()<=40) { "字段超过40个" }
     val ids=HashSet<String>()
     fields.objects().forEach { f -> require(f.s("title",f.s("id")).length<=120){"字段名称过长"};require(f.s("id").matches(Regex("[a-zA-Z][a-zA-Z0-9_]{0,39}")) && ids.add(f.s("id"))) { "字段标识无效或重复" };require(f.s("type") in setOf("text","decimal","date","boolean","choice")) { "未知字段类型" };if(f.s("type")=="choice") require((f.optJSONArray("options")?.length() ?: 0) in 1..30) { "选项不能为空" };if(f.s("type")=="choice"){val options=f.getJSONArray("options");for(i in 0 until options.length())require(options.getString(i).length<=200){"选项文字过长"}} }
+    if(config.has("expression"))Expressions.validate(config.getJSONObject("expression"),fields.objects().filter{it.s("type")=="decimal"}.map{it.s("id")}.toSet())
 }
 
 object MathEngine {
@@ -56,6 +57,14 @@ object MathEngine {
 
 /** Bounded expression AST: no source evaluation or filesystem/network access. */
 object Expressions {
+    fun validate(e:JSONObject,fields:Set<String>,depth:Int=0,budget:IntArray=intArrayOf(256)) {
+        require(depth<24 && --budget[0]>=0){"表达式超过执行预算"}
+        if(e.has("const")){decimal(e.get("const").toString());return}
+        if(e.has("field")){require(e.getString("field") in fields){"表达式引用未知数字字段"};return}
+        val args=(e.optJSONArray("args") ?: JSONArray()).objects();when(e.s("op")){"add","multiply","min","max"->require(args.isNotEmpty());"subtract","divide"->require(args.size==2);"ifPositive"->require(args.size==3);else->error("表达式运算无效")}
+        args.forEach{validate(it,fields,depth+1,budget)}
+    }
+
     fun eval(e:JSONObject,vars:Map<String,BigDecimal>,depth:Int=0,budget:IntArray=intArrayOf(256)):BigDecimal {
         require(depth<24 && --budget[0]>=0) { "表达式超过执行预算" }
         if(e.has("const")) return decimal(e.get("const").toString())
@@ -86,6 +95,7 @@ object Units {
         "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
     )
     fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};val numerator=value.multiply(f.second.toBigDecimal());return try{numerator.divide(t.second.toBigDecimal())}catch(_:ArithmeticException){numerator.divide(t.second.toBigDecimal(),MathContext(24))}}
+    fun dimension(unit:String)=definitions[unit]?.first
     fun isTime(unit:String)=definitions[unit]?.first=="time"
     fun currency(unit:String)=definitions[unit]?.first?.takeIf{it=="CNY"} ?: unit
 }

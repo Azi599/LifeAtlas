@@ -178,7 +178,7 @@ class MainActivity:ComponentActivity() {
                     item{Text("插件中心",style=MaterialTheme.typography.titleLarge);TextButton(onClick={pluginWizard=true}){Text("创建功能包")}}
                     items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${pluginState(p.s("status"))}");TextButton(onClick={vm.action("atlas.rollbackPlugin",obj("pluginId" to p.s("plugin_id")),"回退插件")}){Text("回退")};TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
                     item{Text("工作流",style=MaterialTheme.typography.titleLarge);TextButton(onClick={workflowDialog=true}){Text("新建工作流")}}
-                    items(state.workflows,key={it.s("id")}){Text(it.s("title"))}
+                    items(state.workflows,key={it.s("id")}){w->Column{Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text(w.s("title"),Modifier.weight(1f));Switch(w.optInt("enabled")==1,{vm.action("atlas.setWorkflowStatus",obj("id" to w.s("id"),"enabled" to it),"更新工作流")})};TextButton(onClick={vm.action("atlas.deleteWorkflow",obj("id" to w.s("id")),"删除工作流")}){Text("删除")}}}
                     item{Text("应用扩展与更新",style=MaterialTheme.typography.titleLarge);TextButton(onClick={buildDialog=true}){Text("新增原生能力")}}
                     items(state.builds,key={it.s("id")}){b->BuildCard(b,vm)}
                     }
@@ -223,6 +223,7 @@ fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变
         if(plan.has("question")) (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan"))}){Text(choice.s("title"))}}
         else {
             (plan.optJSONArray("steps") ?: JSONArray()).objects().forEach{step->val a=step.optJSONObject("args") ?: JSONObject();val m=a.optJSONObject("manifest");Text(if(m!=null) "创建功能：${m.s("title")}" else "${actionName(step.s("actionId"))} ${a.s("title")}");if(m!=null){(m.optJSONArray("metrics") ?: JSONArray()).objects().forEach{Text("${it.s("title")} · ${kindName(it.s("kind"))} · ${it.s("unit")}")};FeaturePreview(m)}}
+            (plan.optJSONArray("impact") ?: JSONArray()).objects().forEach{impact->Text(impact.s("title")+" · "+impact.optLong("count")+" 条记录");if(impact.s("oldUnit")!=impact.s("newUnit"))Text(impact.s("oldUnit")+" → "+impact.s("newUnit")+" × "+impact.s("factor"))}
             Button(onClick={onConfirm(plan)}){Text("确认执行")}
         }
         TextButton(onClick=onCancel){Text("取消")}

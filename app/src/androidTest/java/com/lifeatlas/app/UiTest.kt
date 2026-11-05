@@ -56,7 +56,10 @@ class UiTest {
     private fun capture(name:String) {
         rule.waitForIdle()
         val instrumentation=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-        instrumentation.waitForIdleSync();Thread.sleep(600)
+        instrumentation.waitForIdleSync()
+        val committed=java.util.concurrent.CountDownLatch(1)
+        rule.activity.runOnUiThread{val view=rule.activity.window.decorView;view.viewTreeObserver.registerFrameCommitCallback{committed.countDown()};view.invalidate()}
+        committed.await(3,java.util.concurrent.TimeUnit.SECONDS);Thread.sleep(300)
         val bitmap=instrumentation.uiAutomation.takeScreenshot()
         val context=instrumentation.targetContext
         val values=android.content.ContentValues().apply{put(android.provider.MediaStore.Images.Media.DISPLAY_NAME,name);put(android.provider.MediaStore.Images.Media.MIME_TYPE,"image/png");put(android.provider.MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LifeAtlas")}
