@@ -14,21 +14,13 @@ internal class PlanningContext(private val original: JSONObject) {
     fun forModel(): JSONObject {
         val objects = (original.optJSONArray("objects") ?: JSONArray()).objects()
         objects.forEach { alias(it.s("id"), if (it.s("type") == "METRIC") "m" else "o") }
-        val recent = JSONArray()
-        for (operation in (original.optJSONArray("recentOperations") ?: JSONArray()).objects()) {
-            val results = runCatching { JSONObject(operation.s("result")).optJSONObject("steps") }.getOrNull() ?: continue
-            results.keys().asSequence().mapNotNull(results::optJSONObject).forEach { row ->
-                if (row.s("metricId").isNotEmpty() && row.s("id").isNotEmpty() && recent.length() < 12) {
-                    recent.put(record(row))
-                }
-            }
-        }
         val task = original.optJSONObject("currentTask")
         return obj(
             "objects" to JSONArray(objects.map(::objectInfo)),
-            "recentRecords" to recent,
             "selectedObjectId" to alias(original.s("selectedObjectId"), "o"),
-            "appearance" to original.optJSONObject("appearance"),
+            "appearance" to original.optJSONObject("appearance")?.let {
+                obj("mode" to it.s("mode"), "compact" to (it.optInt("compact") == 1), "themeId" to it.s("theme_id"))
+            },
             "currentTask" to task?.let { obj("input" to it.s("rawInput").take(500), "question" to it.s("question").take(500)) },
             "imageText" to original.opt("imageText"),
             "imageLayout" to original.opt("imageLayout"),
@@ -93,7 +85,8 @@ internal class PlanningContext(private val original: JSONObject) {
 
     private fun bindReference(value: Any): Any {
         if (value !is String) return value
-        return aliases.entries.firstOrNull { it.value == value }?.key ?: value
+        val label = value.removePrefix("\$ref:").removeSuffix(".id")
+        return aliases.entries.firstOrNull { it.value == label }?.key ?: value
     }
 
     private fun bindFields(args: JSONObject): JSONObject = JSONObject().apply {

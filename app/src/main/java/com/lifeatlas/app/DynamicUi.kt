@@ -39,7 +39,34 @@ fun componentRange(component:JSONObject):Pair<String,String> {val month=YearMont
 @Composable private fun HistoryComponent(component:JSONObject,metric:JSONObject,state:AtlasState,vm:AtlasModel,onFact:(JSONObject)->Unit) {
     var facts by remember{mutableStateOf<List<JSONObject>>(emptyList())};var offset by remember(component.toString()){mutableIntStateOf(0)};var error by remember{mutableStateOf("")}
     LaunchedEffect(component.toString(),state.revision,metric.s("id"),offset){try{val range=componentRange(component);facts=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.facts(metric.s("id"),range.first,range.second,offset,30)};error=""}catch(e:Exception){if(e is kotlinx.coroutines.CancellationException)throw e;error=e.message.orEmpty()}}
-    Column(verticalArrangement=Arrangement.spacedBy(6.dp)){Text(component.s("title").ifBlank{metric.s("title")},style=MaterialTheme.typography.titleMedium);facts.forEach{fact->Row(Modifier.fillMaxWidth().clickable{onFact(fact)}.padding(vertical=10.dp)){Text(fact.s("local_date"),Modifier.weight(1f));Text(fact.s("value","未填写"))};HorizontalDivider()};if(facts.isEmpty())Text("暂无记录");if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error);Row{TextButton(enabled=offset>0,onClick={offset=(offset-30).coerceAtLeast(0)}){Text("上一页")};TextButton(enabled=facts.size==30,onClick={offset+=30}){Text("下一页")}}}
+    val metricConfig=JSONObject(metric.s("config"))
+    val definitions=metricConfig.optJSONArray("fields")?.objects().orEmpty()
+    Column(verticalArrangement=Arrangement.spacedBy(6.dp)) {
+        Text(component.s("title").ifBlank{metric.s("title")},style=MaterialTheme.typography.titleMedium)
+        facts.forEach { fact ->
+            Column(Modifier.fillMaxWidth().clickable { onFact(fact) }.padding(vertical=10.dp)) {
+                Row(Modifier.fillMaxWidth()) {
+                    Text(fact.s("local_date"),Modifier.weight(1f))
+                    Text(fact.s("value","未填写")+" "+metricConfig.s("unit"))
+                }
+                val fields=JSONObject(fact.s("fields_json"))
+                definitions.forEach { field ->
+                    val value=fields.s(field.s("id"))
+                    if(value.isNotBlank()) {
+                        val display=if(field.s("type")=="boolean") if(value=="true") "是" else "否" else value
+                        Text(field.s("title")+"："+display,style=MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            HorizontalDivider()
+        }
+        if(facts.isEmpty())Text("暂无记录")
+        if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error)
+        ActionRow {
+            TextButton(enabled=offset>0,onClick={offset=(offset-30).coerceAtLeast(0)}){Text("上一页")}
+            TextButton(enabled=facts.size==30,onClick={offset+=30}){Text("下一页")}
+        }
+    }
 }
 @Composable fun ReportPanel(config:JSONObject,state:AtlasState,vm:AtlasModel) {
     var reports by remember{mutableStateOf<List<JSONObject>>(emptyList())};var error by remember{mutableStateOf("")}

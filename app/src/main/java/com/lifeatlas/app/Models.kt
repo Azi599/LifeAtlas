@@ -112,6 +112,7 @@ object Units {
         "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"块" to ("CNY" to "1"),"块钱" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
     )
     fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};val numerator=value.multiply(f.second.toBigDecimal());return try{numerator.divide(t.second.toBigDecimal())}catch(_:ArithmeticException){numerator.divide(t.second.toBigDecimal(),MathContext(24))}}
+    fun knownUnits(): Set<String> = definitions.keys
     fun dimension(unit:String)=definitions[unit]?.first
     fun isTime(unit:String)=definitions[unit]?.first=="time"
     fun currency(unit:String)=definitions[unit]?.first?.takeIf{it=="CNY"} ?: unit

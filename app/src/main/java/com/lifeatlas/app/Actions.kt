@@ -72,19 +72,22 @@ class Actions(val store:AtlasStore) {
         (m.optJSONArray("workflows") ?: JSONArray()).objects().forEach{w->val spec=w.optJSONObject("spec") ?: w;require(w.s("triggerMetricKey",spec.s("triggerMetricKey")) in keys){"工作流触发指标不存在"};require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10){"工作流需包含1至10步"}}
         (m.optJSONArray("actions") ?: JSONArray()).objects().forEach{require(it.s("metricKey") in keys && it.s("template") in setOf("record","query","aggregate")) {"动作模板不合法"}}
     }
-    fun validateProposedPlan(plan: JSONObject) {
+    internal fun validateProposedPlan(plan: JSONObject, evidence: InputEvidence? = null) {
         if (plan.s("requestId").isNotBlank() && store.one("atlas_operations", plan.s("requestId")) != null) return
         val steps = plan.getJSONArray("steps")
         require(steps.length() in 1..60) { "操作步骤应为 1 至 60 项" }
+        val singleRecord = steps.objects().count { it.s("actionId") == "atlas.record" } == 1
         val previous = mutableSetOf<String>()
-        fun requireReference(value: Any, table: String, label: String) {
+        fun requireReference(value: Any, table: String, label: String): JSONObject? {
             if (value is JSONObject) {
                 val reference = value.s("\$ref")
                 require(reference.isNotBlank() && reference.substringBefore('.') in previous) { "$label 引用无效" }
+                return null
             } else {
                 val row = store.one(table, value.toString())
                 require(row != null && row.optInt("deleted") == 0 && row.optInt("archived") == 0) { "$label 不存在，请查找实际对象" }
                 if (label == "指标") require(row.s("type") == "METRIC") { "请选择实际指标" }
+                return row
             }
         }
         for (step in steps.objects()) {
@@ -100,6 +103,11 @@ class Actions(val store:AtlasStore) {
                     if (!args.isNull("parentId") && args.s("parentId").isNotBlank()) {
                         requireReference(args.get("parentId"), "atlas_objects", "上级对象")
                     }
+                    if (type == "VIEW") {
+                        require(args.optJSONObject("config")?.s("component") in setOf("schema", "chart", "report")) {
+                            "页面要有可用内容，请使用 atlas.createView 或 atlas.report"
+                        }
+                    }
                     if (type == "METRIC") {
                         validateMetric(args.getJSONObject("config"))
                         if (args.optJSONObject("parentId") == null) {
@@ -113,7 +121,8 @@ class Actions(val store:AtlasStore) {
                     }
                 }
                 "atlas.record" -> {
-                    requireReference(args.get("metricId"), "atlas_objects", "指标")
+                    val metric = requireReference(args.get("metricId"), "atlas_objects", "指标")
+                    evidence?.prepareRecord(args, metric, singleRecord)
                     LocalDate.parse(args.getString("date"))
                     args.s("value").takeIf { it.isNotBlank() }?.let(::decimal)
                     require(args.isNull("fields") || args.optJSONObject("fields") != null) { "记录字段应按名称和数值提供" }
@@ -143,15 +152,45 @@ class Actions(val store:AtlasStore) {
                         val metric = store.one("atlas_objects", row.s("metric_id"))
                         val config = JSONObject(metric?.s("config", "{}") ?: "{}")
                         val fields = JSONObject(row.s("fields_json"))
+                        args.put("_expectedRevision", row.optLong("revision"))
                         val value = resolvedRecordValue(row.s("value").takeIf { it.isNotBlank() }?.let(::decimal), fields, config)
+                        val proposedFields = fields.copyJson()
+                        args.optJSONObject("fields")?.let { changes ->
+                            changes.keys().forEach { key -> if (!key.startsWith("_")) proposedFields.put(key, changes.get(key)) }
+                        }
+                        proposedFields.put("_unitVersion", config.optInt("unitVersion"))
+                            .put("_schemaRevision", metric?.optLong("revision", 1) ?: 1)
+                        val proposedValue = if (args.has("value")) {
+                            val raw = args.s("value").takeIf { it.isNotBlank() }?.let(::decimal)
+                            if (raw != null) normalizedValue(raw, proposedFields, config) else null
+                        } else value
                         step.put("review", obj("title" to metric?.s("title"), "date" to row.s("local_date"),
+                            "proposedValue" to proposedValue?.toPlainString(),
                             "value" to value?.toPlainString(), "unit" to config.s("unit"), "revision" to row.optLong("revision"),
                             "zone" to row.s("zone"), "startAt" to row.opt("start_at"), "endAt" to row.opt("end_at"),
                             "occurredAt" to row.opt("occurred_at"), "fields" to fields))
                     }
                 }
                 "atlas.installPlugin", "atlas.updatePlugin" -> manifestValid(args.getJSONObject("manifest"))
+                "atlas.navigate" -> require(args.s("page") in setOf("workspace", "spaces", "history", "analytics", "settings")) {
+                    "请选择首页、空间、记录、分析或我的"
+                }
+                "atlas.createView" -> {
+                    val components = args.getJSONArray("components")
+                    validateUi(components)
+                    for (component in components.objects()) {
+                        when (component.s("component")) {
+                            "form", "history", "chart", "summary" -> requireReference(component.get("metricId"), "atlas_objects", "指标")
+                            "navigation" -> requireReference(component.get("objectId"), "atlas_objects", "跳转对象")
+                        }
+                    }
+                }
+                "atlas.setAppearance" -> {
+                    val compact = args.opt("compact")
+                    if (compact is Number && compact.toDouble() in setOf(0.0, 1.0)) args.put("compact", compact.toInt() == 1)
+                }
                 "atlas.report" -> {
+                    evidence?.fillReportRange(args)
                     val metrics = args.getJSONArray("metrics")
                     require(metrics.length() in 1..50) { "请选已有指标生成报告" }
                     for (index in 0 until metrics.length()) requireReference(metrics.get(index), "atlas_objects", "指标")
@@ -228,6 +267,9 @@ class Actions(val store:AtlasStore) {
             "atlas.record" -> return record(a,raw)
             "atlas.editRecord","atlas.deleteRecord","atlas.restoreRecord" -> {
                 val r=store.one("atlas_facts",a.getString("id")) ?: error("记录不存在")
+                require(!a.has("_expectedRevision") || a.optLong("_expectedRevision") == r.optLong("revision")) {
+                    "记录已变化，请重新提交指令核对"
+                }
                 if(action=="atlas.editRecord") {
                     val c=store.config(r.s("metric_id"));val fields=JSONObject(r.s("fields_json"));val transferGroup=if(fields.s("flow")=="transfer")fields.s("transferGroup")else ""
                     if(a.has("fields")){val supplied=a.getJSONObject("fields");supplied.keys().forEach{key->if(!key.startsWith("_"))fields.put(key,supplied.get(key))};validateFields(c,fields,a.optBoolean("allowIncomplete"))}

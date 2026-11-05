@@ -21,13 +21,14 @@ class Planner(private val actions: Actions) {
         require(config.key.isNotBlank()) { "请先配置 AI API 密钥，或使用手动操作" }
         val today = LocalDate.now()
         val bindings = PlanningContext(context)
+        val evidence = if (context.has("imageText")) null else InputEvidence(input, today)
         val prompt = """
             你是 Life Atlas 的操作规划器。今天 $today，时区 ${ZoneId.systemDefault().id}。
             只返回一个完整 JSON 对象。宿主执行操作、换算单位、计算统计。
             从上下文复制已有指标的 id。记一笔数据必须有 atlas.record。创建指标本身不会产生记录。
             用户说了几件独立的事就分别列步骤。只做他要求的事，使用现有对象；缺少时才创建最小定义。
-            修改记录要用记录 id（不是指标 id）。找不到先 atlas.query，改成什么不清楚就追问，禁止猜数值。
-            未知时刻留空，时段用带 Z 或偏移的 ISO 时刻；数值是十进制字符串，原单位可用 unit 传给宿主。
+            新增事实用 atlas.record。只有用户明确要求更正时才用 atlas.editRecord。修改先用 atlas.query 找到真实记录 id，直接使用返回的 r 代号。改成什么不清楚就追问。
+            未知时刻留空。时段的 startAt 是开始，endAt 是结束，可用 HH:mm 或含时区的 ISO 时刻。使用原句数值与单位，宿主换算。
             报告用现有指标的 atlas.report，不生成额外指标或假记录。新功能包先预览。
             JSON 形状示例：
             {"title":"记一笔","steps":[{"stepId":"s1","actionId":"atlas.record","args":{"metricId":"已有指标代号","value":"250","unit":"毫升","date":"${today.minusDays(1)}"}}]}
@@ -42,6 +43,7 @@ class Planner(private val actions: Actions) {
             kind 为 SNAPSHOT/CHANGE/ALLOCATION，字段类型 text/decimal/date/boolean/choice。记录类型只在内部使用。
             atlas.query/atlas.aggregate: metricId,from?,to?,limit?；aggregate 指定起止日期和 method?。
             atlas.report: title,metrics（指标 id 数组）,from,to。atlas.navigate: page（workspace/spaces/history/analytics/settings）。
+            atlas.createView: title,components（引用真实指标的表单、历史或图表）。财务 role 使用 income/expense/balance/accountChange。
             atlas.setAppearance: mode（light/dark/system）,compact?,themeId?。atlas.searchObjects: keyword,type?。
             atlas.installPlugin: manifest={id（字母开头）,title,version（整数）,metrics:[{key,title,kind,unit,aggregate,fields?}],screens:[{title,components:[{component:form/history/chart/summary/text/navigation,metricKey?,chart?}]}]}。
             需要其他操作时查询 atlas.capabilities。原生能力走 atlas.requestBuild，外部构建步骤使用 atomic=false。
@@ -52,8 +54,10 @@ class Planner(private val actions: Actions) {
             每条记录提供含数值的原文 sourceExcerpt。无金额可留空并 allowIncomplete=true，不能补 0。日期歧义追问；状态栏时间不是发生时间。
             imageImport 只允许 atlas.record/createObject/createEvent，不建额外功能、页面或目录。不要把合计再次记成明细。
         """.trimIndent() else ""
+        val modelContext = bindings.forModel()
+        evidence?.let { modelContext.put("inputEvidence", it.hints()) }
         val messages = JSONArray()
-            .put(obj("role" to "system", "content" to prompt + "\n可用对象：" + bindings.forModel()))
+            .put(obj("role" to "system", "content" to prompt + "\n可用对象：" + modelContext))
             .put(obj("role" to "user", "content" to input))
         var repairs = 0
         var validationError = ""
@@ -62,7 +66,7 @@ class Planner(private val actions: Actions) {
             try {
                 val proposed = bindings.bindPlan(parse(response))
                 if (proposed.has("steps") || proposed.has("question")) {
-                    prepare(proposed, input, context)
+                    prepare(proposed, input, context, evidence)
                     return proposed
                 }
                 val tools = proposed.optJSONArray("tools") ?: error("请返回 steps、question 或 tools")
@@ -98,7 +102,7 @@ class Planner(private val actions: Actions) {
         error(validationError.ifBlank { "查询轮次达到上限" } + "，输入已保留")
     }
 
-    private fun prepare(plan: JSONObject, input: String, context: JSONObject) {
+    private fun prepare(plan: JSONObject, input: String, context: JSONObject, evidence: InputEvidence?) {
         plan.put("requestId", uid()).put("rawInput", input).put("ai", true)
         if (plan.has("question")) {
             require(plan.s("question").isNotBlank()) { "请说明需要补充的信息" }
@@ -108,11 +112,11 @@ class Planner(private val actions: Actions) {
                 require(option.s("title").isNotBlank()) { "选项缺少名称" }
                 val choice = option.getJSONObject("plan")
                 require(!choice.has("question")) { "选项应包含可执行操作" }
-                prepare(choice, input, context)
+                prepare(choice, input, context, evidence)
             }
         } else {
             plan.getJSONArray("steps").objects().forEach { it.remove("review") }
-            actions.validateProposedPlan(plan)
+            actions.validateProposedPlan(plan, evidence)
             if (context.optBoolean("imageImport")) {
                 PlanReview.validateImageImport(plan, context.s("imageText"))
                 plan.put("imageImport", true)

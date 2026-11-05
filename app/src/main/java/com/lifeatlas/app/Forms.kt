@@ -148,6 +148,6 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
     when(field.s("type")) {
         "choice"->Pick(label,(field.optJSONArray("options") ?: JSONArray()).let{a->(0 until a.length()).map{a.getString(it) to a.getString(it)}},value,onChange)
         "boolean"->Pick(label,listOf("true" to "是","false" to "否"),value,onChange)
-        else->Column(verticalArrangement=Arrangement.spacedBy(4.dp)){Text(label,style=MaterialTheme.typography.bodyMedium);OutlinedTextField(value,onChange,modifier=Modifier.fillMaxWidth())}
+        else->OutlinedTextField(value,onChange,label={Text(label)},modifier=Modifier.fillMaxWidth())
     }
 }
