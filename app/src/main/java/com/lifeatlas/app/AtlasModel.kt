@@ -62,7 +62,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun undo(redo:Boolean=false)=work(if(redo) "正在恢复" else "正在撤销") {obj("message" to ((if(redo) "已恢复：" else "已撤销：")+store.undo(redo)))}
     fun addImage(uri:Uri)=work("正在读取图片") {
         val resolver=getApplication<Application>().contentResolver;val mime=resolver.getType(uri) ?: "image/jpeg";require(mime.startsWith("image/")){"请选择图片"}
-        val bytes=resolver.openInputStream(uri)!!.use{it.readNBytes(4_000_001)};require(bytes.size<=4_000_000){"图片需小于4MB"};update{it.copy(image="data:$mime;base64,"+Base64.encodeToString(bytes,Base64.NO_WRAP))};obj("message" to "图片已附加，描述需要识别或执行的内容")
+        val bytes=resolver.openInputStream(uri)!!.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;require(out.size()+n<=4_000_000){"图片需小于4MB"};out.write(buffer,0,n)};out.toByteArray()};require(bytes.size<=4_000_000){"图片需小于4MB"};update{it.copy(image="data:$mime;base64,"+Base64.encodeToString(bytes,Base64.NO_WRAP))};obj("message" to "图片已附加，描述需要识别或执行的内容")
     }
     fun clearImage(){update{it.copy(image=null)}}
     fun export(uri:Uri,csv:Boolean=false)=work("正在导出") {getApplication<Application>().contentResolver.openOutputStream(uri)!!.bufferedWriter().use{if(csv) store.exportCsv(it) else store.export(it)};obj("message" to "导出完成")}
