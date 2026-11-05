@@ -43,7 +43,7 @@ class UiTest {
         rule.onNodeWithText("显示：记录").performScrollTo().performClick();rule.onNodeWithText("时间轴").performClick();rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("timeline-item"));rule.onAllNodesWithTag("timeline-item").onFirst().assertIsDisplayed();capture("timeline.png")
         rule.onNodeWithText("分析").performClick();rule.onNodeWithText("选择指标：请选择").performScrollTo().performClick();rule.onNodeWithText("浇水量").performClick();rule.onNodeWithTag("trend-chart").performScrollTo().assertIsDisplayed();capture("analysis.png")
         rule.onNodeWithText("首页").performClick();rule.onNodeWithText("输入").performTextInput("创建新的生活项目");capture("keyboard.png");closeKeyboard()
-        rule.onNodeWithText("我的").performClick();rule.onNodeWithText("外观").performScrollTo().performClick();rule.onNodeWithText("已保存主题：薰衣草").assertExists();capture("theme-editor.png")
+        rule.onNodeWithText("我的").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick){it()};rule.waitUntil(10000){rule.onAllNodesWithText("外观").fetchSemanticsNodes().isNotEmpty()};rule.onNodeWithText("外观").performScrollTo().performClick();rule.onNodeWithText("已保存主题：薰衣草").assertExists();capture("theme-editor.png")
         rule.onNodeWithText("主题名称").performScrollTo().performTextClearance();rule.onNodeWithText("主题名称").performTextInput("粉紫日记");closeKeyboard()
         rule.onNodeWithText("主色").performScrollTo().performClick();rule.onNodeWithText("调色盘").assertExists();capture("color-picker.png")
         rule.onNodeWithText("HEX").performTextClearance();rule.onNodeWithText("HEX").performTextInput("#BAA1D7");rule.onNodeWithText("选择").performClick()
@@ -62,7 +62,17 @@ class UiTest {
         vm.clearPending();runBlocking{vm.action("atlas.setAppearance",obj("mode" to "dark"),"深色").join()};rule.waitForIdle();capture("dark-home.png")
         runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()}
     }
-    private fun closeKeyboard(){rule.activity.runOnUiThread{(rule.activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(rule.activity.currentFocus?.windowToken,0)};Thread.sleep(600)}
+    private fun closeKeyboard(){
+        rule.activity.runOnUiThread{
+            rule.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime())
+            val token=rule.activity.currentFocus?.windowToken
+            rule.activity.currentFocus?.clearFocus()
+            (rule.activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(token,0)
+        }
+        rule.waitUntil(10000){androidx.core.view.ViewCompat.getRootWindowInsets(rule.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())!=true}
+        rule.waitForIdle();Thread.sleep(300)
+    }
+
     @org.junit.After fun restoreDefault(){runCatching{val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java];runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()}}}
     private fun capture(name:String) {
         rule.waitForIdle()
