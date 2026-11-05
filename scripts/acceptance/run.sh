@@ -7,6 +7,8 @@ model_pid=
 proxy_pid=
 collect() {
     result=$?
+    timeout 12 adb wait-for-device >/dev/null 2>&1 || true
+    adb logcat -d -s AtlasAcceptance:I >acceptance/scenarios.log 2>/dev/null || true
     adb pull /sdcard/Pictures/LifeAtlasAcceptance acceptance/screenshots >/dev/null 2>&1 || true
     adb pull /sdcard/Download/LifeAtlasAcceptance acceptance/device >/dev/null 2>&1 || true
     if [ -n "$proxy_pid" ]; then kill "$proxy_pid" 2>/dev/null || true; fi
@@ -14,6 +16,8 @@ collect() {
     exit "$result"
 }
 trap collect EXIT
+
+./gradlew :app:testStandaloneDebugUnitTest :app:assembleStandaloneDebug :app:assembleStandaloneDebugAndroidTest --stacktrace
 
 # TLS remains enabled end to end. Only the instrumented test trusts this CA.
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=127.0.0.1' \
@@ -23,8 +27,8 @@ certificate=$(openssl x509 -in "$model_dir/test-cert.pem" -outform DER | base64 
 
 LD_LIBRARY_PATH="$model_dir/bin" "$model_dir/bin/llama-server" \
     --model "$model_dir/qwen.gguf" --alias lifeatlas-acceptance \
-    --host 127.0.0.1 --port 9081 --threads 4 --ctx-size 16384 --parallel 1 \
-    --n-predict 2048 >acceptance/model-server.log 2>&1 &
+    --host 127.0.0.1 --port 9081 --threads 4 --ctx-size 8192 --parallel 1 \
+    --n-predict 1100 >acceptance/model-server.log 2>&1 &
 model_pid=$!
 for attempt in $(seq 1 90); do
     if curl -fsS http://127.0.0.1:9081/health >/dev/null 2>&1; then break; fi
@@ -39,4 +43,5 @@ adb reverse tcp:9443 tcp:9443
 adb shell settings put secure show_ime_with_hard_keyboard 1
 ./gradlew :app:connectedStandaloneDebugAndroidTest \
     -Pandroid.testInstrumentationRunnerArguments.class=com.lifeatlas.app.LanguageAcceptanceTest \
-    "-Pandroid.testInstrumentationRunnerArguments.atlasAcceptanceCert=$certificate" --stacktrace
+    "-Pandroid.testInstrumentationRunnerArguments.atlasAcceptanceCert=$certificate" \
+    "-Pandroid.testInstrumentationRunnerArguments.atlasAcceptanceCases=${ATLAS_ACCEPTANCE_CASES:-}" --stacktrace

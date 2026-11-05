@@ -19,20 +19,30 @@ data class AtlasState(
     val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val themeConfig:String=ThemeDefaults.config().toString(),val themeId:String="lavender",val objects:List<JSONObject> = emptyList(),val facts:List<JSONObject> = emptyList(),
     val operations:List<JSONObject> = emptyList(),val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
     val historyMetric:String="",val historyFrom:String=java.time.YearMonth.now().atDay(1).toString(),val historyTo:String=LocalDate.now().toString(),val historyOffset:Int=0,val events:List<JSONObject> = emptyList(),val builds:List<JSONObject> = emptyList(),val layouts:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
-    val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val imageLayout:String="[]",val error:String=""
+    val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val imageLayout:String="[]",val error:String="",val draft:String=""
 )
 class AtlasModel(app:Application):AndroidViewModel(app) {
     val store=AtlasStore(app);val settings=Settings(app);val actions=Actions(store);val planner=Planner(actions)
     private val commandMutex=Mutex()
-    private val state=MutableStateFlow(AtlasState());val ui=state.asStateFlow()
+    private val submitting = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val state=MutableStateFlow(AtlasState(draft=settings.prefs.getString("draft", "").orEmpty()));val ui=state.asStateFlow()
     private var historyMetric:String?=null
     private var historyFrom=java.time.YearMonth.now().atDay(1).toString()
     private var historyTo=LocalDate.now().toString()
     private var historyOffset=0
-    var draft:String=settings.prefs.getString("draft","") ?: ""
+    val draft: String get() = state.value.draft
     init {refresh()}
     private fun update(block:(AtlasState)->AtlasState) {state.update(block)}
-    fun saveDraft(s:String) {draft=s;settings.prefs.edit().putString("draft",s).apply()}
+    @Synchronized
+    fun saveDraft(text: String) {
+        update { it.copy(draft = text) }
+        settings.prefs.edit().putString("draft", text).apply()
+    }
+
+    @Synchronized
+    private fun clearSubmittedDraft(input: String) {
+        if (draft == input) saveDraft("")
+    }
     fun refresh()=viewModelScope.launch(Dispatchers.IO) {load()}
     private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,facts=store.facts(historyMetric,historyFrom,historyTo,historyOffset),events=store.historyEvents(historyMetric,historyFrom,historyTo,historyOffset),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
@@ -45,16 +55,20 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在保存"){
         val command=plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)}
         if(command.optBoolean("ai")) actions.validateProposedPlan(command)
-        if(command.optBoolean("fromChoice") && requiresReview(command)) {
-            command.remove("fromChoice")
+        val fromChoice = command.optBoolean("fromChoice")
+        command.remove("fromChoice")
+        if (fromChoice && requiresReview(command)) {
             return@work obj("status" to "PREVIEW", "plan" to command, "message" to "请核对后保存")
         }
-        val result=actions.execute(command,confirmed)
-        if(result.s("status")=="DONE" && plan.optBoolean("imageImport")){update{it.copy(image=null,imageText="",imageLayout="[]")};saveDraft("")}
+        val result = actions.execute(command, confirmed && !fromChoice)
+        if (result.s("status") == "DONE" && command.optBoolean("ai")) {
+            if (command.optBoolean("imageImport")) update { it.copy(image = null, imageText = "", imageLayout = "[]") }
+            clearSubmittedDraft(command.s("rawInput"))
+        }
         result
     }
     private fun planInput(input:String,source:String="",importOnly:Boolean=false):JSONObject {
-        val context=obj("appearance" to ThemeRepository(store).appearance(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
+        val context=obj("appearance" to ThemeRepository(store).appearance(),"objects" to JSONArray(store.objects(all=true).take(200)),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
         if(source.isNotBlank())context.put("imageText",source).put("imageLayout",JSONArray(state.value.imageLayout)).put("imageImport",importOnly)
         var attempt=0
         while(true) {
@@ -74,17 +88,28 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
                 (action == "atlas.createObject" && step.optJSONObject("args")?.s("type") == "METRIC")
         }
 
-    fun submit(input:String) {
+    fun submit(input: String) {
+        if (!submitting.compareAndSet(false, true)) return
         saveDraft(input)
-        work("正在理解需求") {
-            if(input.trim().startsWith("{"))return@work actions.execute(JSONObject(input))
-            Offline.plan(input,store)?.let{return@work actions.execute(it)}
-            val text=state.value.imageText
-            require(state.value.image==null || text.isNotBlank()){"图片未识别出文字，请换一张清晰图片"}
-            planInput(input.ifBlank{"整理图片中的记录供我确认"},text,text.isNotBlank())
+        val job = work("正在理解需求") {
+            val result = if (input.trim().startsWith("{")) {
+                actions.execute(JSONObject(input))
+            } else {
+                val offline = Offline.plan(input, store)
+                if (offline != null) {
+                    actions.execute(offline)
+                } else {
+                    val text = state.value.imageText
+                    require(state.value.image == null || text.isNotBlank()) { "图片未识别出文字，请换一张清晰图片" }
+                    planInput(input.ifBlank { "整理图片中的记录供我确认" }, text, text.isNotBlank())
+                }
+            }
+            if (result.s("status") == "DONE") clearSubmittedDraft(input)
+            result
         }
+        job.invokeOnCompletion { submitting.set(false) }
     }
-    fun clearPending() {update{it.copy(pending=null)}}
+    fun clearPending() {update{if(it.pending==null)it else it.copy(pending=null,error="",status="已取消")}}
     fun undo(redo:Boolean=false)=work(if(redo) "正在恢复" else "正在撤销") {obj("message" to ((if(redo) "已恢复：" else "已撤销：")+store.undo(redo)))}
     fun addImage(uri:Uri)=work("正在识别图片") {
         val resolver=getApplication<Application>().contentResolver;val mime=resolver.getType(uri) ?: "image/jpeg";require(mime.startsWith("image/")){"请选择图片"}

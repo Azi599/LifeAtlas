@@ -35,6 +35,8 @@ class LanguageAcceptanceTest {
     private val results = JSONArray()
     private val today = LocalDate.now()
     private val yesterday = today.minusDays(1)
+    private val selectedCases = InstrumentationRegistry.getArguments().getString("atlasAcceptanceCases", "")
+        .split(',').filter { it.isNotBlank() }.toSet()
 
     @Test fun naturalLanguageFromHomeThroughStorageAndPages() {
         val certificate = InstrumentationRegistry.getArguments().getString("atlasAcceptanceCert")
@@ -104,10 +106,11 @@ class LanguageAcceptanceTest {
                 assertEquals(yesterday.atTime(23,40), start.toLocalDateTime())
                 assertEquals(today.atTime(0,20), end.toLocalDateTime())
             }
+            val beforeAmbiguity = model.store.query("SELECT id,value,revision FROM atlas_facts ORDER BY id").map { it.toString() }
             scenario("ambiguous-edit", "刚才那条，帮我改一下。") {
                 val pending = model.ui.value.pending ?: error("应追问具体改什么")
                 assertTrue(pending.s("question").isNotBlank())
-                record(sleep, yesterday, "40")
+                assertEquals(beforeAmbiguity, model.store.query("SELECT id,value,revision FROM atlas_facts ORDER BY id").map { it.toString() })
                 show(pending.s("question"))
             }
             val previousTotal = model.store.aggregate(expense, yesterday.toString(), today.toString()).s("value").toBigDecimalOrNull()
@@ -143,6 +146,7 @@ class LanguageAcceptanceTest {
                 val components = pages.flatMap { row -> JSONObject(row.s("config")).optJSONArray("components")?.objects().orEmpty() }
                 val types = components.map { it.s("component") }.toSet()
                 assertTrue("实际页面缺录入、历史或趋势：$types", types.containsAll(setOf("form", "history", "chart")))
+                checkGeneratedFeature(manifest.s("id"), fields)
             }
             scenario("navigation", "打开分析页，我要看看统计。") {
                 show("选择指标：请选择")
@@ -163,6 +167,54 @@ class LanguageAcceptanceTest {
         assertTrue(failed.joinToString("\n") { "${it.s("id")}: ${it.s("failure")}" }, failed.isEmpty())
     }
 
+    private fun checkGeneratedFeature(pluginId: String, fields: List<JSONObject>) {
+        val project = model.store.query("SELECT id FROM atlas_objects WHERE plugin_id=? AND type='PROJECT'", arrayOf(pluginId)).single()
+        val pages = model.store.objects(project.s("id")).filter { it.s("type") == "VIEW" }
+        var openView = ""
+        fun openComponent(type: String): JSONObject {
+            val view = pages.first { page ->
+                JSONObject(page.s("config")).optJSONArray("components")?.objects()?.any { it.s("component") == type } == true
+            }
+            if (openView != view.s("id")) {
+                if (openView.isNotBlank()) {
+                    show("返回上级")
+                    rule.onNodeWithText("返回上级").performClick()
+                }
+                show(view.s("title"))
+                rule.onNode(hasText(view.s("title")) and hasClickAction()).performClick()
+                openView = view.s("id")
+            }
+            return JSONObject(view.s("config")).getJSONArray("components").objects().first { it.s("component") == type }
+        }
+        val form = openComponent("form")
+        val metric = model.store.one("atlas_objects", form.s("metricId")) ?: error("录入入口缺指标")
+        val config = JSONObject(metric.s("config"))
+        val birdField = fields.first { it.s("title").contains("鸟") && it.s("type") == "text" }
+        val soundField = fields.first { it.s("title").contains("叫声") && it.s("type") == "boolean" }
+        val button = form.s("title").ifBlank { "记录" + metric.s("title") }
+        show(button)
+        rule.onNodeWithText(button).performClick()
+        rule.onNodeWithText("数值 · " + config.s("unit")).performTextReplacement("3")
+        val birdLabel = birdField.s("title") + if (birdField.optBoolean("required")) " *" else ""
+        rule.onNodeWithText(birdLabel).performScrollTo().performTextReplacement("麻雀")
+        hideKeyboard()
+        val soundLabel = soundField.s("title") + if (soundField.optBoolean("required")) " *" else ""
+        rule.onNodeWithText("$soundLabel：请选择").performScrollTo().performClick()
+        rule.onNodeWithText("是").performClick()
+        val before = model.ui.value
+        rule.onNodeWithText("保存").performClick()
+        waitForWork(before)
+        val saved = record(metric.s("id"), today, "3")
+        val values = JSONObject(saved.s("fields_json"))
+        assertEquals("麻雀", values.s(birdField.s("id")))
+        assertEquals("true", values.s(soundField.s("id")))
+        openComponent("history")
+        show("麻雀", substring = true)
+        openComponent("chart")
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("trend-chart"))
+        rule.onNodeWithTag("trend-chart").assertIsDisplayed()
+    }
+
     private fun metric(title: String, kind: String, unit: String, aggregate: String, role: String = ""): String {
         val config = obj("kind" to kind, "unit" to unit, "aggregate" to aggregate, "role" to role)
         return model.actions.single("atlas.createObject", obj("type" to "METRIC", "title" to title, "config" to config))
@@ -178,6 +230,7 @@ class LanguageAcceptanceTest {
     }
 
     private fun scenario(id: String, input: String, verify: () -> Unit) {
+        if (selectedCases.isNotEmpty() && id !in selectedCases) return
         val evidence = obj("id" to id, "input" to input)
         val start = android.os.SystemClock.elapsedRealtime()
         try {
@@ -203,6 +256,8 @@ class LanguageAcceptanceTest {
             evidence.put("status", state.status).put("error", state.error)
             evidence.put("elapsedMs", android.os.SystemClock.elapsedRealtime() - start)
             results.put(evidence)
+            android.util.Log.i("AtlasAcceptance", obj("id" to id, "passed" to evidence.optBoolean("passed"),
+                "status" to state.status, "failure" to evidence.opt("failure"), "elapsedMs" to evidence.opt("elapsedMs")).toString())
             runCatching { capture(id) }
         }
     }

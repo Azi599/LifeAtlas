@@ -53,7 +53,7 @@ import java.time.LocalDate
                     Text(actionName(step.s("actionId"))+" · "+review.s("title"),style=MaterialTheme.typography.titleSmall)
                     val unit=review.s("unit").let{if(it=="CNY")"元" else it}
                     val value=review.s("value","待补数值")
-                    Text(if(a.has("value")) "$value → ${a.s("value","待补数值")} $unit" else "$value $unit")
+                    Text(if(a.has("value")) "$value → ${review.s("proposedValue","待补数值")} $unit" else "$value $unit")
                     Text(if(a.s("date").isNotBlank() && a.s("date")!=review.s("date")) "${review.s("date")} → ${a.s("date")}" else review.s("date"))
                     val zone=a.s("zone",review.s("zone"))
                     if(a.optBoolean("clearTime"))Text("移除具体时刻")

@@ -86,8 +86,7 @@ class MainActivity:ComponentActivity() {
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit) {
     val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var showImageText by remember{mutableStateOf(false)}
-    var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
-    LaunchedEffect(state.image,state.status){if(state.image==null && vm.draft.isBlank() && state.status.startsWith("已保存"))command=""}
+    val command=state.draft;var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
     val listState=rememberLazyListState()
     LaunchedEffect(page,selected){listState.scrollToItem(0)}
     val scope=rememberCoroutineScope()
@@ -121,7 +120,7 @@ class MainActivity:ComponentActivity() {
         bottomBar={Column(Modifier.imePadding()) {
             if(page=="workspace") Surface(Modifier.fillMaxWidth()) {Column(Modifier.padding(horizontal=18.dp,vertical=8.dp)) {
                 if(state.status.isNotBlank()) Text(state.status,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=if(state.error.isNotBlank())MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(bottom=4.dp).testTag("command-status"))
-                OutlinedTextField(command,{command=it;vm.saveDraft(it)},modifier=Modifier.fillMaxWidth(),label={Text("输入")},minLines=1,maxLines=3)
+                OutlinedTextField(command,vm::saveDraft,modifier=Modifier.fillMaxWidth(),label={Text("输入")},minLines=1,maxLines=3)
                 Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
                     TextButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "换图")}
                     if(state.image!=null)TextButton(enabled=!state.busy,onClick=vm::clearImage){Text("移除")}
@@ -158,7 +157,11 @@ class MainActivity:ComponentActivity() {
                         item{MetricPanel(chosen,vm,state.revision,onRecord={record=chosen})}
                     } else if(chosen?.s("type")=="VIEW") {
                         val c=JSONObject(chosen.s("config"))
-                        if(c.s("component")=="chart") item{val metric=resolvedObject(c.s("metricId"),state,vm);if(metric!=null)MetricPanel(metric,vm,state.revision,onRecord={record=metric},chartType=c.s("chart","line"))}
+                        if(c.s("component")=="chart" && c.s("chart")=="list") item{
+                            val history=obj("component" to "history","title" to chosen.s("title"),"metricId" to c.s("metricId"))
+                            DynamicScreen(obj("components" to JSONArray().put(history)),state,vm,onRecord={record=it},onOpen={open(it)},onFact={editingFact=it})
+                        }
+                        else if(c.s("component")=="chart") item{val metric=resolvedObject(c.s("metricId"),state,vm);if(metric!=null)MetricPanel(metric,vm,state.revision,onRecord={record=metric},chartType=c.s("chart","line"))}
                         else if(c.s("component")=="report") item{ReportPanel(c,state,vm)}
                         else if(c.s("component")=="schema") item{DynamicScreen(c,state,vm,onRecord={record=it},onOpen={open(it)},onFact={editingFact=it})}
                     }
