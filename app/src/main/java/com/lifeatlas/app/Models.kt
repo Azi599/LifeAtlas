@@ -81,10 +81,27 @@ object Expressions {
     }
 }
 
-fun normalizedValue(raw:BigDecimal,fields:JSONObject,config:JSONObject):BigDecimal {
-    val revision=fields.optInt("_unitVersion",0);var result=raw
-    (config.optJSONArray("conversions") ?: JSONArray()).objects().filter{it.optInt("version")>revision}.forEach{result*=decimal(it.getString("factor"))}
+fun resolvedRecordValue(raw:BigDecimal?,fields:JSONObject,config:JSONObject):BigDecimal? {
+    var value=raw;var unitVersion=fields.optInt("_unitVersion",0)
+    val rule=(config.optJSONArray("historyRules") ?: JSONArray()).objects().lastOrNull{it.optLong("revision")>fields.optLong("_schemaRevision",1)}
+    if(rule!=null) {
+        if(rule.s("mode")=="raw")value=raw
+        else {val vars=fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap();value=runCatching{Expressions.eval(rule.getJSONObject("expression"),vars)}.getOrNull();unitVersion=rule.optInt("unitVersion",0)}
+    }
+    var result=value ?: return null
+    (config.optJSONArray("conversions") ?: JSONArray()).objects().filter{it.optInt("version")>unitVersion}.forEach{result*=decimal(it.getString("factor"))}
+    if(fields.s("flow")!="transfer"){if(config.s("role")=="expense")result=if(fields.s("flow")=="refund")result.abs()else result.abs().negate();if(config.s("role")=="income")result=result.abs()}
+    if(config.s("role") in setOf("income","expense","balance","accountChange"))return runCatching{result.setScale(config.optInt("decimalPlaces",2),java.math.RoundingMode.UNNECESSARY)}.getOrNull()
     return result
+}
+fun normalizedValue(raw:BigDecimal,fields:JSONObject,config:JSONObject):BigDecimal=resolvedRecordValue(raw,fields,config) ?: error("计算所需字段缺失或无效")
+fun retainCalculationHistory(before:JSONObject,next:JSONObject,revision:Long,mode:String,hasRecords:Boolean) {
+    val rules=JSONArray((before.optJSONArray("historyRules") ?: JSONArray()).toString())
+    if(before.optJSONObject("expression")?.toString()!=next.optJSONObject("expression")?.toString() && hasRecords) {
+        require(mode in setOf("recalculate","preserve")){"计算规则已变化，请选择重算历史或保留原计算结果"}
+        if(mode=="recalculate")rules.put(obj("revision" to revision,"mode" to if(next.has("expression"))"expression"else "raw","expression" to next.optJSONObject("expression"),"unitVersion" to next.optInt("unitVersion",0)))
+    }
+    next.put("historyRules",rules)
 }
 
 object Units {

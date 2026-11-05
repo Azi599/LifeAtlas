@@ -21,7 +21,7 @@ class Actions(val store:AtlasStore) {
         "atlas.checkForUpdate" to "查询更新源 args feed?",
         "atlas.installUpdate" to "验证并安装更新 args feed?",
         "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,fields:[{id,title,type,required,options?}],expression?}",
-        "atlas.updateObject" to "修改或移动对象 args id,title?,parentId?,config?,archived?；指标语义不得改变",
+        "atlas.updateObject" to "修改或移动对象 args id,title?,parentId?,config?,historyMode?(recalculate/preserve),archived?；指标语义不得改变",
         "atlas.relate" to "关联对象 args fromId,toId,kind",
         "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",
         "atlas.copyObject" to "复制对象定义 args id,title?；不复制数据事实",
@@ -37,7 +37,7 @@ class Actions(val store:AtlasStore) {
         "atlas.createView" to "创建声明式页面 args title,parentId?,components:[{component:form/history/chart/summary/text/navigation,metricId?,chart?,text?,objectId?}]",
         "atlas.report" to "创建报告页面 args title,metrics:[metricId],from,to",
         "atlas.installPlugin" to "安装功能包 args manifest={id,title,version,metrics:[{key,title,kind,unit,aggregate,fields?,expression?}],views:[{title,metricKey,chart}],actions?:[{id,metricKey,template}],workflows?:[]}；需用户预览确认",
-        "atlas.updatePlugin" to "升级功能包 args manifest，同 key 保留数据；单位转换需 migrationFactor 显式确认",
+        "atlas.updatePlugin" to "升级功能包 args manifest，同 key 保留数据；单位转换需 migrationFactor 显式确认，计算规则变化需 historyMode(recalculate/preserve)",
         "atlas.setPluginStatus" to "启停已安装插件 args pluginId,enabled",
         "atlas.rollbackPlugin" to "回退插件上一版本 args pluginId；通过操作历史同步恢复配置和记录",
         "atlas.layout" to "设置首页对象卡 args objectId,position,hidden",
@@ -126,7 +126,7 @@ class Actions(val store:AtlasStore) {
                 val row=store.one("atlas_objects",a.getString("id")) ?: error("对象不存在")
                 if(a.has("parentId")) {val parent=a.s("parentId").ifEmpty{null};var cursor=parent;val seen=hashSetOf(row.getString("id"));while(cursor!=null){require(seen.add(cursor)){"目录不能循环包含"};cursor=store.one("atlas_objects",cursor)?.s("parent_id")?.ifEmpty{null}};row.put("parent_id",parent ?: JSONObject.NULL)}
                 if(a.has("title")){require(a.getString("title").trim().isNotEmpty());row.put("title",a.getString("title").trim())}
-                if(a.has("config")) {val next=a.getJSONObject("config");if(row.s("type")=="METRIC"){validateMetric(next);val before=JSONObject(row.s("config"));require(before.s("kind")==next.s("kind")) {"指标语义已有历史，需创建新指标"};require(before.s("unit")==next.s("unit")){"单位变化请通过插件迁移"};next.put("unitVersion",before.optInt("unitVersion",0));next.put("conversions",before.optJSONArray("conversions") ?: JSONArray())};row.put("config",next.toString())}
+                if(a.has("config")) {val next=a.getJSONObject("config");if(row.s("type")=="METRIC"){validateMetric(next);val before=JSONObject(row.s("config"));require(before.s("kind")==next.s("kind")) {"指标语义已有历史，需创建新指标"};require(before.s("unit")==next.s("unit")){"单位变化请通过插件迁移"};next.put("unitVersion",before.optInt("unitVersion",0));next.put("conversions",before.optJSONArray("conversions") ?: JSONArray());retainCalculationHistory(before,next,row.optLong("revision",1)+1,a.s("historyMode"),store.query("SELECT id FROM atlas_facts WHERE metric_id=? LIMIT 1",arrayOf(row.s("id"))).isNotEmpty())};row.put("config",next.toString())}
                 if(a.has("archived")) row.put("archived",if(a.getBoolean("archived")) 1 else 0)
                 row.put("revision",row.getLong("revision")+1);row.put("updated_at",now());store.put("atlas_objects",row);return obj("id" to row.s("id"))
             }
@@ -182,7 +182,7 @@ class Actions(val store:AtlasStore) {
             "atlas.setPluginStatus" -> {if(!a.getBoolean("enabled")){val target=a.getString("pluginId");val dependents=store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'").filter{row->(JSONObject(row.s("manifest")).optJSONArray("requires") ?: JSONArray()).objects().any{it.s("pluginId")==target}};require(dependents.isEmpty()){ "有已启用插件依赖此功能包" }};store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE'",arrayOf(a.getString("pluginId"))).forEach{store.put("atlas_plugins",it.put("status",if(a.getBoolean("enabled")) "ACTIVE" else "DISABLED"))};if(a.getBoolean("enabled")) store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC LIMIT 1",arrayOf(a.getString("pluginId"))).forEach{store.put("atlas_plugins",it.put("status","ACTIVE"))};return obj("pluginId" to a.s("pluginId"))}
             "atlas.rollbackPlugin" -> {
                 val versions=store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC",arrayOf(a.getString("pluginId")));require(versions.size>=2){"没有可回退的版本"}
-                val current=JSONObject(versions[0].s("manifest"));val target=JSONObject(versions[1].s("manifest"));target.put("version",versions[0].getInt("version")+1)
+                val current=JSONObject(versions[0].s("manifest"));val target=JSONObject(versions[1].s("manifest"));target.put("version",versions[0].getInt("version")+1);target.put("historyMode","recalculate")
                 target.getJSONArray("metrics").objects().forEach{metric->current.getJSONArray("metrics").objects().firstOrNull{it.s("key")==metric.s("key")}?.let{latest->if(latest.s("unit")!=metric.s("unit")) metric.put("migrationFactor",BigDecimal.ONE.divide(decimal(latest.getString("migrationFactor")),java.math.MathContext.DECIMAL128).toPlainString())}}
                 return install(target,true)
             }
@@ -236,7 +236,7 @@ class Actions(val store:AtlasStore) {
             val existing=store.query("SELECT id,title,config FROM atlas_objects WHERE plugin_id=? AND type='METRIC'",arrayOf(plugin))
             (manifest.optJSONArray("metrics") ?: JSONArray()).objects().forEach{next->val old=existing.firstOrNull{JSONObject(it.s("config")).s("key")==next.s("key")} ?: return@forEach
                 val count=store.query("SELECT COUNT(*) n FROM atlas_facts WHERE metric_id=? AND deleted=0",arrayOf(old.s("id"))).first().getLong("n")
-                result.put(obj("title" to next.s("title"),"count" to count,"oldUnit" to JSONObject(old.s("config")).s("unit"),"newUnit" to next.s("unit"),"factor" to next.s("migrationFactor")))
+                result.put(obj("title" to next.s("title"),"count" to count,"oldUnit" to JSONObject(old.s("config")).s("unit"),"newUnit" to next.s("unit"),"factor" to next.s("migrationFactor"),"expressionChanged" to (JSONObject(old.s("config")).optJSONObject("expression")?.toString()!=next.optJSONObject("expression")?.toString())))
             }
         };return result
     }
@@ -287,7 +287,7 @@ class Actions(val store:AtlasStore) {
             else {val before=JSONObject(prev.s("config"));require(before.s("kind")==c.s("kind")){"不能改变历史指标语义"};val id=prev.s("id");ids[key]=id
                 val conversions=before.optJSONArray("conversions") ?: JSONArray();var unitVersion=before.optInt("unitVersion",0)
                 if(before.s("unit")!=c.s("unit")){val factor=decimal(c.getString("migrationFactor"));require(factor>BigDecimal.ZERO);if(Units.dimension(before.s("unit"))!=null && Units.dimension(c.s("unit"))!=null)require(Units.convert(BigDecimal.ONE,before.s("unit"),c.s("unit")).compareTo(factor)==0){"单位转换系数不正确"};unitVersion++;conversions.put(obj("version" to unitVersion,"factor" to factor.toPlainString(),"from" to before.s("unit"),"to" to c.s("unit")))}
-                c.put("unitVersion",unitVersion);c.put("conversions",conversions)
+                c.put("unitVersion",unitVersion);c.put("conversions",conversions);retainCalculationHistory(before,c,prev.optLong("revision",1)+1,c.s("historyMode",m.s("historyMode")),store.query("SELECT id FROM atlas_facts WHERE metric_id=? LIMIT 1",arrayOf(id)).isNotEmpty())
                 prev.put("config",c.toString());prev.put("title",c.getString("title"));prev.put("revision",prev.getLong("revision")+1);prev.put("updated_at",now());store.put("atlas_objects",prev)
             }
         }

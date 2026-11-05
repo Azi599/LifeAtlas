@@ -114,4 +114,18 @@ class StorageTest {
         actions.single("atlas.deleteRecord",obj("id" to id));assertTrue(db.facts(from).isEmpty() && db.facts(to).isEmpty());db.undo();assertEquals(1,db.facts(from).size);assertEquals(1,db.facts(to).size)
     }
 
+    @Test fun expressionUpgradeRetainsRawHistoryAndExplicitPolicy() {
+        fun manifest(version:Int,factor:String,mode:String="")=obj("id" to "formula.test","title" to "自定义计算","version" to version,"historyMode" to mode,"metrics" to JSONArray().put(obj("key" to "computed","title" to "结果","kind" to "CHANGE","unit" to "分值","aggregate" to "SUM","fields" to JSONArray().put(obj("id" to "x","title" to "原始输入","type" to "decimal","required" to true)),"expression" to obj("op" to "multiply","args" to JSONArray().put(obj("field" to "x")).put(obj("const" to factor))))))
+        actions.single("atlas.installPlugin",obj("manifest" to manifest(1,"2")),confirmed=true);val metric=db.metrics().first().s("id")
+        val original=actions.single("atlas.record",obj("metricId" to metric,"date" to "2026-11-05","fields" to obj("x" to "3"))).getJSONObject("steps").getJSONObject("result").s("id")
+        val preview=actions.single("atlas.updatePlugin",obj("manifest" to manifest(2,"3")));assertTrue(preview.getJSONObject("plan").getJSONArray("impact").getJSONObject(0).getBoolean("expressionChanged"))
+        try{actions.single("atlas.updatePlugin",obj("manifest" to manifest(2,"3")),confirmed=true);fail()}catch(_:IllegalArgumentException){}
+        assertEquals("6",db.facts(metric).first().s("value"))
+        actions.single("atlas.updatePlugin",obj("manifest" to manifest(2,"3","recalculate")),confirmed=true);assertEquals("9",db.aggregate(metric,"2026-11-01","2026-11-30").s("value"));assertEquals("6",db.one("atlas_facts",original)!!.s("value"))
+        db.close();db=AtlasStore(context,"tests.db");actions=Actions(db);assertEquals("9",db.facts(metric).first().s("value"))
+        actions.single("atlas.rollbackPlugin",obj("pluginId" to "formula.test"),confirmed=true);assertEquals("6",db.facts(metric).first().s("value"))
+        actions.single("atlas.updatePlugin",obj("manifest" to manifest(4,"4","preserve")),confirmed=true);actions.single("atlas.record",obj("metricId" to metric,"date" to "2026-11-05","fields" to obj("x" to "3")))
+        assertEquals("18",db.aggregate(metric,"2026-11-01","2026-11-30").s("value"));assertEquals("6",db.facts(metric).first{it.s("id")==original}.s("value"))
+    }
+
 }

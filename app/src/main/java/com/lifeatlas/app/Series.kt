@@ -22,7 +22,7 @@ fun AtlasStore.dailySeries(metric:String,from:String,to:String):List<JSONObject>
     fun add(date:String,value:BigDecimal?,weight:BigDecimal?=null,start:Instant?=null,end:Instant?=null){if(date<from || date>to)return;val b=days.getOrPut(date){DailyBucket()};b.add(value,weight,method);if(start!=null && end!=null)b.intervals.add(start.toEpochMilli() to end.toEpochMilli())}
     readableDatabase.rawQuery("SELECT local_date,value,fields_json,start_at,end_at,zone FROM atlas_facts WHERE metric_id=? AND deleted=0 AND $where ORDER BY local_date,occurred_at,created_at,id",args).use{cursor->while(cursor.moveToNext()) {
         val fields=JSONObject(cursor.getString(2));if(c.s("role") in setOf("income","expense") && fields.s("flow")=="transfer")continue
-        val weight=fields.s("weight").toBigDecimalOrNull();val value=if(cursor.isNull(1))null else normalizedValue(decimal(cursor.getString(1)),fields,c)
+        val weight=fields.s("weight").toBigDecimalOrNull();val value=resolvedRecordValue(if(cursor.isNull(1))null else decimal(cursor.getString(1)),fields,c)
         if(allocation && !cursor.isNull(3) && !cursor.isNull(4)) {
             val start=Instant.parse(cursor.getString(3));val end=Instant.parse(cursor.getString(4));val zone=ZoneId.of(cursor.getString(5))
             if(split) {var t=start;while(t<end){val day=t.atZone(zone).toLocalDate();val next=minOf(end,day.plusDays(1).atStartOfDay(zone).toInstant());val duration=Units.convert(secondsBetween(t,next),"s",c.s("unit"));add(day.toString(),duration,weight,t,next);t=next}}

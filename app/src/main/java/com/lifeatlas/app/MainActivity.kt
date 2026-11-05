@@ -96,7 +96,7 @@ class MainActivity:ComponentActivity() {
     val listState=rememberLazyListState()
     LaunchedEffect(page,selected){listState.scrollToItem(0)}
     val scope=rememberCoroutineScope()
-    fun editById(id:String){scope.launch {val row=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.query("SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE f.id=?",arrayOf(id)).firstOrNull()?.also{f->if(f.s("value").isNotEmpty())f.put("value",normalizedValue(decimal(f.s("value")),JSONObject(f.s("fields_json")),vm.store.config(f.s("metric_id"))).toPlainString())}};editingFact=row}}
+    fun editById(id:String){scope.launch {val row=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.query("SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE f.id=?",arrayOf(id)).firstOrNull()?.also{f->f.put("value",resolvedRecordValue(f.s("value").takeIf{it.isNotEmpty()}?.let(::decimal),JSONObject(f.s("fields_json")),vm.store.config(f.s("metric_id")))?.toPlainString() ?: JSONObject.NULL)}};editingFact=row}}
     var timeline by rememberSaveable{mutableStateOf(false)}
     var objectCache by remember{mutableStateOf<Map<String,JSONObject>>(emptyMap())}
     var spaceRows by remember{mutableStateOf<List<JSONObject>>(emptyList())};var spaceSearch by rememberSaveable{mutableStateOf("")};var spaceOffset by rememberSaveable{mutableIntStateOf(0)};var archived by rememberSaveable{mutableStateOf(false)}
@@ -226,13 +226,17 @@ class MainActivity:ComponentActivity() {
 fun typeName(s:String)=mapOf("WORKSPACE" to "工作空间","FOLDER" to "目录","PROJECT" to "项目","METRIC" to "指标","VIEW" to "页面","DASHBOARD" to "仪表盘","WORKFLOW" to "工作流")[s] ?: s
 fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变化","ALLOCATION" to "时间分配")[s] ?: s
 @Composable fun PlanPreview(plan:JSONObject,onConfirm:(JSONObject)->Unit,onCancel:()->Unit) {
+    var historyMode by rememberSaveable(plan.toString()){mutableStateOf("")}
+    val needsHistory=(plan.optJSONArray("impact") ?: JSONArray()).objects().any{it.optBoolean("expressionChanged") && it.optLong("count")>0}
+
     Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
         Text(plan.s("question",plan.s("title","操作预览")),style=MaterialTheme.typography.titleMedium)
         if(plan.has("question")) (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan"))}){Text(choice.s("title"))}}
         else {
             (plan.optJSONArray("steps") ?: JSONArray()).objects().forEach{step->val a=step.optJSONObject("args") ?: JSONObject();val m=a.optJSONObject("manifest");Text(if(m!=null) "创建功能：${m.s("title")}" else "${actionName(step.s("actionId"))} ${a.s("title")}");if(m!=null){(m.optJSONArray("metrics") ?: JSONArray()).objects().forEach{Text("${it.s("title")} · ${kindName(it.s("kind"))} · ${it.s("unit")}")};FeaturePreview(m)}}
             (plan.optJSONArray("impact") ?: JSONArray()).objects().forEach{impact->Text(impact.s("title")+" · "+impact.optLong("count")+" 条记录");if(impact.s("oldUnit")!=impact.s("newUnit"))Text(impact.s("oldUnit")+" → "+impact.s("newUnit")+" × "+impact.s("factor"))}
-            Button(onClick={onConfirm(plan)}){Text("确认执行")}
+            if(needsHistory)Pick("历史记录",listOf("recalculate" to "按新规则重算","preserve" to "保留原计算结果"),historyMode){historyMode=it}
+            Button(enabled=!needsHistory || historyMode.isNotBlank(),onClick={val confirmed=plan.copyJson();if(historyMode.isNotBlank())(confirmed.optJSONArray("steps") ?: JSONArray()).objects().forEach{it.optJSONObject("args")?.optJSONObject("manifest")?.put("historyMode",historyMode)};onConfirm(confirmed)}){Text("确认执行")}
         }
         TextButton(onClick=onCancel){Text("取消")}
     }}
