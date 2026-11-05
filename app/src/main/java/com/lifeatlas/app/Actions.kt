@@ -20,7 +20,7 @@ class Actions(val store:AtlasStore) {
         "atlas.installBuild" to "验证并安装构建结果 args id；由 Android 系统确认安装",
         "atlas.checkForUpdate" to "查询更新源 args feed?",
         "atlas.installUpdate" to "验证并安装更新 args feed?",
-        "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,fields:[{id,title,type,required,options?}],expression?}",
+        "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?(income/expense/balance/accountChange/sleep),decimalPlaces?,fields:[{id,title,type,required,options?}],expression?}",
         "atlas.updateObject" to "修改或移动对象 args id,title?,parentId?,config?,historyMode?(recalculate/preserve),archived?；指标语义不得改变",
         "atlas.relate" to "关联对象 args fromId,toId,kind",
         "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",
@@ -267,7 +267,7 @@ class Actions(val store:AtlasStore) {
         val fact=obj("id" to id,"event_id" to e,"metric_id" to metric,"kind" to kind,"value" to value?.toPlainString(),"local_date" to date,"occurred_at" to occurred,"start_at" to start,"end_at" to end,"precision" to if(start!=null) "INTERVAL" else if(occurred!=null) "INSTANT" else "DATE","zone" to zone,"fields_json" to fields.toString(),"deleted" to 0,"revision" to 1,"created_at" to t,"updated_at" to t)
         store.put("atlas_facts",fact);indexFields(fact)
         if(runWorkflow) store.query("SELECT * FROM atlas_workflows WHERE enabled=1 LIMIT 100").forEach{w->val spec=JSONObject(w.s("spec"));if(spec.s("triggerMetricId")==metric){val vars=fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap()+listOfNotNull(value?.let{"value" to it}).toMap();if(!spec.has("condition") || Expressions.eval(spec.getJSONObject("condition"),vars)>BigDecimal.ZERO) (spec.optJSONArray("steps") ?: JSONArray()).objects().forEach{step->val actionId=step.s("actionId");require(actionId in setOf("atlas.createObject","atlas.updateObject","atlas.layout","atlas.relate","atlas.requestBuild","atlas.record","atlas.report")){"工作流动作未获授权"};val args=resolve(step.getJSONObject("args"),mapOf("record" to obj("id" to id,"metricId" to metric,"value" to value?.toPlainString(),"date" to date,"eventId" to e))) as JSONObject;if(actionId=="atlas.record") record(args,raw,false) else dispatch(actionId,args,raw)}}}
-        return obj("id" to id,"eventId" to e,"metricId" to metric)
+        return obj("id" to id,"eventId" to e,"metricId" to metric,"metricTitle" to owner.s("title"),"value" to value?.toPlainString(),"unit" to c.s("unit"),"date" to date,"fields" to fields)
     }
     private fun indexFields(f:JSONObject) {
         val fields=JSONObject(f.s("fields_json"));store.query("SELECT id,field_id FROM atlas_fields WHERE fact_id=?",arrayOf(f.s("id"))).filter{!fields.has(it.s("field_id"))}.forEach{store.remove("atlas_fields",it.s("id"))};fields.keys().forEach{k->store.put("atlas_fields",obj("id" to "${f.s("id")}:$k","fact_id" to f.s("id"),"field_id" to k,"value" to fields.s(k),"type" to if(fields.s(k).toBigDecimalOrNull()!=null) "decimal" else "text"))}

@@ -28,8 +28,8 @@ for width in [320,360,393,432,600,840]:
     for scale in ['1.0','1.3','1.5']:
         adb('shell','wm','size',f'{width}x900')
         adb('shell','settings','put','system','font_scale',scale)
-        adb('shell','am','force-stop','com.lifeatlas.app.newhost')
-        adb('shell','am','start','-n','com.lifeatlas.app.newhost/com.lifeatlas.app.MainActivity')
+        adb('shell','am','force-stop','com.lifeatlas.app.newhost.test')
+        adb('shell','am','start','-n','com.lifeatlas.app.newhost.test/com.lifeatlas.app.MainActivity')
         time.sleep(3)
         for name,label in [('workspace','首页'),('spaces','空间'),('history','记录'),('analytics','分析'),('settings','我的')]:
             tap_text(label)
@@ -43,8 +43,8 @@ for width in [320,360,393,432,600,840]:
                 time.sleep(1)
 adb('shell','settings','put','system','font_scale','1.0')
 adb('shell','wm','size','900x432')
-adb('shell','am','force-stop','com.lifeatlas.app.newhost')
-adb('shell','am','start','-n','com.lifeatlas.app.newhost/com.lifeatlas.app.MainActivity')
+adb('shell','am','force-stop','com.lifeatlas.app.newhost.test')
+adb('shell','am','start','-n','com.lifeatlas.app.newhost.test/com.lifeatlas.app.MainActivity')
 time.sleep(3)
 (OUTPUT/'workspace-landscape.png').write_bytes(adb('exec-out','screencap','-p'))
 adb('pull','/sdcard/Pictures/LifeAtlas',str(OUTPUT/'instrumented'))

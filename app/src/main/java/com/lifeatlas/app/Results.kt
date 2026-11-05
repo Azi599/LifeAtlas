@@ -3,21 +3,30 @@ package com.lifeatlas.app
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
 @Composable fun ExecutionResults(result:JSONObject,objects:List<JSONObject>,onOpen:(String)->Unit,onFact:(JSONObject)->Unit,onRetry:(JSONObject)->Unit={},onFactId:(String)->Unit={}) {
     val steps=result.optJSONObject("steps") ?: return
+    val receipts=steps.keys().asSequence().mapNotNull{steps.optJSONObject(it)}.filter{it.has("eventId") && it.has("metricId") && it.s("id").isNotEmpty()}.toList()
+    var expanded by remember(result.toString()){mutableStateOf(false)}
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        if(receipts.isNotEmpty())Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            (if(expanded)receipts else receipts.take(3)).forEach{r->OutlinedCard(Modifier.fillMaxWidth().clickable{onFactId(r.s("id"))}){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                Row(Modifier.fillMaxWidth()){Text(r.s("metricTitle").ifBlank{objects.firstOrNull{it.s("id")==r.s("metricId")}?.s("title") ?: "记录"},Modifier.weight(1f));Text(r.s("value","待补数值")+" "+r.s("unit").let{if(it=="CNY")"元" else it})}
+                Text(r.s("date"),style=MaterialTheme.typography.bodySmall)
+            }}}
+            if(receipts.size>3)TextButton(onClick={expanded=!expanded}){Text(if(expanded)"收起" else "展开其余 ${receipts.size-3} 条")}
+        }
         if(result.has("retryPlan"))OutlinedButton(onClick={onRetry(result.getJSONObject("retryPlan"))}){Text("重试剩余操作")}
 
         steps.keys().forEach{key->val value=steps.optJSONObject(key) ?: return@forEach
             if(value.has("status"))Text(buildState(value.s("status")))
             if(value.has("update")){val release=value.getJSONObject("update");Text("可更新至 ${release.s("versionName",release.optLong("versionCode").toString())}")}
             if(value.has("points"))Trend(value.getJSONArray("points").objects(),value.s("unit"),value.s("chart","line"))
-            if(value.has("eventId") && value.has("metricId") && value.s("id").isNotEmpty())OutlinedButton(onClick={onFactId(value.s("id"))}){Text("修改此记录")}
+
             if(value.has("records")) {
                 val records=value.getJSONArray("records").objects()
                 Text("查询结果 · ${records.size} 条",style=MaterialTheme.typography.titleMedium)

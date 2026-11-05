@@ -13,6 +13,13 @@ android {
         targetSdk = 36
         versionCode = providers.gradleProperty("atlasVersionCode").orElse("3").get().toInt()
         versionName = "0.3.0-test"
+        manifestPlaceholders["appLabel"] = "Life Atlas"
+    }
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".test"
+            manifestPlaceholders["appLabel"] = "Life Atlas 实测"
+        }
     }
     flavorDimensions += "distribution"
     productFlavors {
