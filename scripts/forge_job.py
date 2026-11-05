@@ -22,7 +22,7 @@ except HTTPError as error:
 if existing:
     runs=service.github('actions/runs?branch='+quote(branch,safe='')+'&event=workflow_dispatch&per_page=30')['workflow_runs']
     if not any(run['head_sha']==existing and run['path']=='.github/workflows/native-build.yml' for run in runs):
-        service.github('actions/workflows/native-build.yml/dispatches','POST',{'ref':branch,'inputs':{'request_id':request_id}})
+        service.github('actions/workflows/native-build.yml/dispatches','POST',{'ref':branch,'inputs':{'request_id':request_id,'channel':spec.get('channel','standalone')}})
     plan={'id':request_id,'summary':'Reuse committed source for this request','branch':branch,'commit':existing}
 else:
     if not service.AI_KEY:raise ValueError('Configure LIFEATLAS_AI_KEY in repository Actions secrets')
@@ -35,7 +35,7 @@ else:
     tree=service.github('git/trees','POST',{'base_tree':tree_sha,'tree':entries})['sha']
     commit=service.github('git/commits','POST',{'message':'Native feature: '+spec.get('title',request_id),'tree':tree,'parents':[base]})['sha']
     service.github('git/refs','POST',{'ref':'refs/heads/'+branch,'sha':commit})
-    service.github('actions/workflows/native-build.yml/dispatches','POST',{'ref':branch,'inputs':{'request_id':request_id}})
+    service.github('actions/workflows/native-build.yml/dispatches','POST',{'ref':branch,'inputs':{'request_id':request_id,'channel':spec.get('channel','standalone')}})
     plan['commit']=commit
 pathlib.Path('feature-plan.json').write_text(json.dumps(plan,ensure_ascii=False),encoding='utf-8')
 print('Source saved; Android workflow submitted: '+plan['commit'])

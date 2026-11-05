@@ -25,7 +25,7 @@ class GitHubBuildClient(private val settings:Settings) {
         if(spec.s("kind")=="rollback") {
             val commit=spec.getString("sourceCommit");require(commit.matches(Regex("[a-f0-9]{40}")))
             val branch="native/"+id;api("git/refs",obj("ref" to "refs/heads/"+branch,"sha" to commit))
-            api("actions/workflows/native-build.yml/dispatches",obj("ref" to branch,"inputs" to obj("request_id" to id)))
+            api("actions/workflows/native-build.yml/dispatches",obj("ref" to branch,"inputs" to obj("request_id" to id,"channel" to BuildConfig.CHANNEL)))
         }else api("actions/workflows/forge.yml/dispatches",obj("ref" to base,"inputs" to obj("request_id" to id,"request_json" to spec.toString())))
         return obj("id" to "gh:"+id,"status" to "SUBMITTED","baselineCommit" to baseline,"detail" to "GitHub 已接收扩展任务")
     }

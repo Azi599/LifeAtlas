@@ -99,9 +99,14 @@ class Actions(val store:AtlasStore) {
         }
     }
 
-    private fun resolve(value:Any,refs:Map<String,JSONObject>):Any = when(value){
-        is JSONObject->if(value.has("\$ref")){val path=value.getString("\$ref").split('.');val r=refs[path[0]] ?: error("引用的步骤尚未执行");r.get(path.getOrElse(1){"id"})} else JSONObject().apply{value.keys().forEach{put(it,resolve(value.get(it),refs))}}
-        is JSONArray->JSONArray().apply{for(i in 0 until value.length()) put(resolve(value.get(i),refs))};else->value
+    private fun resolve(value:Any,refs:Map<String,JSONObject>,deferRecord:Boolean=false):Any = when(value) {
+        is JSONObject->if(value.has("\$ref")) {
+            val path=value.getString("\$ref").split('.')
+            if(deferRecord && path[0]=="record" && path[0] !in refs)value.copyJson()
+            else {var result:Any=refs[path[0]] ?: error("引用的步骤尚未执行");val fields=path.drop(1).ifEmpty{listOf("id")};fields.forEach{field->result=when(val current=result){is JSONObject->current.get(field);is JSONArray->current.get(field.toInt());else->error("引用路径无效")}};when(result){is JSONObject->(result as JSONObject).copyJson();is JSONArray->JSONArray(result.toString());else->result}}
+        }else JSONObject().apply{value.keys().forEach{key->put(key,resolve(value.get(key),refs,deferRecord || key in setOf("manifest","spec")))}}
+        is JSONArray->JSONArray().apply{for(i in 0 until value.length())put(resolve(value.get(i),refs,deferRecord))}
+        else->value
     }
     fun single(action:String,args:JSONObject,title:String=action,confirmed:Boolean=false)=execute(obj("requestId" to uid(),"title" to title,"steps" to JSONArray().put(obj("stepId" to "result","actionId" to action,"args" to args))),confirmed)
     fun dispatch(action:String,a:JSONObject,raw:String=""):JSONObject {

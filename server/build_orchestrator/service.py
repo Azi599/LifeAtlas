@@ -136,7 +136,7 @@ def process(job_id):
         next_tree = github("git/trees", "POST", {"base_tree": tree_sha, "tree": entries})["sha"]
         next_commit = github("git/commits", "POST", {"message": "Native feature: " + json.loads(row["spec"]).get("title", job_id), "tree": next_tree, "parents": [base]})["sha"]
         github("git/refs", "POST", {"ref": "refs/heads/" + branch, "sha": next_commit})
-        github("actions/workflows/native-build.yml/dispatches", "POST", {"ref": branch, "inputs": {"request_id": job_id}})
+        github("actions/workflows/native-build.yml/dispatches", "POST", {"ref": branch, "inputs": {"request_id": job_id,"channel": json.loads(row["spec"]).get("channel","standalone")}})
         update(job_id, status="SUBMITTED", commit_sha=next_commit, detail="Source committed; GitHub Actions dispatched")
     except Exception as error:
         update(job_id, status="FAILED", detail=f"{type(error).__name__}: {str(error)[:500]}")

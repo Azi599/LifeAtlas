@@ -13,7 +13,7 @@ class ExternalActions(private val store:AtlasStore) {
         "atlas.submitBuild"->{
             val row=store.one("atlas_builds",args.getString("id")) ?: error("构建任务不存在")
             if(row.s("remote_id").isNotEmpty())obj("id" to row.s("id"),"status" to row.s("status")) else {
-                val spec=JSONObject(row.s("request"));val result=if(settings.getSecret("github_build_token").isNotBlank())GitHubBuildClient(settings).submit(spec,row.s("id")) else BuildClient(settings).submit(spec,row.s("id"))
+                val spec=JSONObject(row.s("request")).put("channel",BuildConfig.CHANNEL);val result=if(settings.getSecret("github_build_token").isNotBlank())GitHubBuildClient(settings).submit(spec,row.s("id")) else BuildClient(settings).submit(spec,row.s("id"))
                 store.transact("提交云端构建"){store.put("atlas_builds",row.put("request",spec.put("baselineCommit",result.s("baselineCommit")).toString()).put("status",result.s("status")).put("remote_id",result.s("id")).put("detail",result.s("detail")).put("updated_at",now()));obj("id" to row.s("id"),"status" to result.s("status"))}
             }
         }

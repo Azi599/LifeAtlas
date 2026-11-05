@@ -5,6 +5,10 @@ on:
       request_id:
         description: Build service request ID
         required: true
+      channel:
+        description: standalone or play
+        required: false
+        default: standalone
 permissions:
   contents: read
 jobs:
@@ -41,11 +45,17 @@ jobs:
           path: app/build/outputs/apk/standalone/release/*-unsigned.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-play-update
+          path: app/build/outputs/bundle/playRelease/*.aab
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-test-results
           path: app/build/reports/
   sign:
+    if: ${{ inputs.channel != 'play' }}
     runs-on: ubuntu-latest
     needs: verify
     environment: native-release
@@ -75,4 +85,39 @@ jobs:
         with:
           name: signed-native-update
           path: signed/LifeAtlas-update.apk
+          if-no-files-found: error
+
+  sign-play:
+    if: ${{ inputs.channel == 'play' }}
+    runs-on: ubuntu-latest
+    needs: verify
+    environment: play-release
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-play-update
+          path: unsigned
+      - name: Sign verified Play bundle
+        env:
+          KEYSTORE: ${{ secrets.PLAY_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.PLAY_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.PLAY_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.PLAY_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE" || { echo 'Configure play-release upload signing credentials'; exit 1; }
+          printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/play.jks"
+          aab=$(find unsigned -name '*.aab' -type f | head -1)
+          mkdir -p signed
+          jarsigner -keystore "$RUNNER_TEMP/play.jks" -storepass:env STORE_PASS -keypass:env KEY_PASS -signedjar signed/LifeAtlas-play.aab "$aab" "$KEY_ALIAS"
+          jarsigner -verify signed/LifeAtlas-play.aab
+          rm "$RUNNER_TEMP/play.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-play-update
+          path: signed/LifeAtlas-play.aab
           if-no-files-found: error
