@@ -13,7 +13,7 @@ fun obj(vararg pairs:Pair<String,Any?>) = JSONObject().apply { pairs.forEach { p
 fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
 fun JSONObject.s(key:String, fallback:String="") = if(isNull(key)) fallback else optString(key,fallback)
 fun JSONObject.copyJson() = JSONObject(toString())
-fun decimal(value:String):BigDecimal { require(value.length<=100) { "数值过长" };return value.toBigDecimal().also { require(it.precision()<=30 && kotlin.math.abs(it.scale())<=12) { "数值超出精度范围" } } }
+fun decimal(value:String):BigDecimal { require(value.length<=100) { "数值过长" };return value.toBigDecimal().also { require(it.precision()<=80 && kotlin.math.abs(it.scale())<=80) { "数值超出精度范围" } } }
 val kinds=setOf("SNAPSHOT","CHANGE","ALLOCATION")
 val objectTypes=setOf("WORKSPACE","FOLDER","PROJECT","METRIC","DASHBOARD","VIEW","WORKFLOW")
 val aggregateMethods=setOf("SUM","MEAN","WEIGHTED_MEAN","LAST_SNAPSHOT","UNION_DURATION","MEDIAN","MIN","MAX","COUNT")

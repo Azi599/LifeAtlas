@@ -9,6 +9,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
@@ -20,8 +22,8 @@ import kotlin.math.*
 
 @Composable fun ThemeEditor(vm:AtlasModel) {
     val state by vm.ui.collectAsState();val themes=remember(state.revision){ThemeRepository(vm.store).themes()}
-    var selected by remember{mutableStateOf(state.themeId)};var draft by remember{mutableStateOf(JSONObject(state.themeConfig))}
-    var name by remember{mutableStateOf(themes.firstOrNull{it.s("id")==selected}?.s("title") ?: "自定义主题")};var mode by remember{mutableStateOf("light")};var picker by remember{mutableStateOf<String?>(null)};var error by remember{mutableStateOf("")}
+    var selected by rememberSaveable{mutableStateOf(state.themeId)};var draft by rememberSaveable(stateSaver=Saver<JSONObject,String>(save={it.toString()},restore={JSONObject(it)})){mutableStateOf(JSONObject(state.themeConfig))}
+    var name by rememberSaveable{mutableStateOf(themes.firstOrNull{it.s("id")==selected}?.s("title") ?: "自定义主题")};var mode by rememberSaveable{mutableStateOf("light")};var picker by remember{mutableStateOf<String?>(null)};var error by remember{mutableStateOf("")}
     fun change(key:String,value:Any){draft=draft.copyJson().apply{getJSONObject(mode).put(key,value)}}
     val c=draft.getJSONObject(mode);val stops=c.getJSONArray("stops").objects()
     Column(verticalArrangement=Arrangement.spacedBy(14.dp)) {

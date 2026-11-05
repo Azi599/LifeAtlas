@@ -27,7 +27,7 @@ class Actions(val store:AtlasStore) {
         "atlas.copyObject" to "复制对象定义 args id,title?；不复制数据事实",
         "atlas.deleteObject" to "归档对象 args id，可撤销",
         "atlas.record" to "新增记录 args metricId,value?(十进制字符串),date(YYYY-MM-DD),occurredAt?,fields?,eventId?,startAt?,endAt?。未知数值留空",
-        "atlas.editRecord" to "修改记录 args id,value?,date?,fields?",
+        "atlas.editRecord" to "修改记录 args id,value?,date?,fields?,startAt?,endAt?,zone?,clearTime?；时长与区间必须一致",
         "atlas.deleteRecord" to "软删除记录 args id；可撤销",
         "atlas.restoreRecord" to "恢复记录 args id",
         "atlas.searchObjects" to "按名称发现对象和指标 args keyword,type?,offset?，返回至多100个真实对象",
@@ -127,16 +127,23 @@ class Actions(val store:AtlasStore) {
             "atlas.editRecord","atlas.deleteRecord","atlas.restoreRecord" -> {
                 val r=store.one("atlas_facts",a.getString("id")) ?: error("记录不存在")
                 if(action=="atlas.editRecord") {
-                    if(a.has("value")) {
-                        val c=store.config(r.s("metric_id"));var v=a.s("value").ifEmpty{null}?.let(::decimal)
-                        if(JSONObject(r.s("fields_json")).s("flow")!="transfer"){if(c.s("role")=="expense")v=if(JSONObject(r.s("fields_json")).s("flow")=="refund")v?.abs() else v?.abs()?.negate();if(c.s("role")=="income")v=v?.abs()}
+                    val c=store.config(r.s("metric_id"));val fields=JSONObject(r.s("fields_json"))
+                    if(a.has("fields")){val supplied=a.getJSONObject("fields");supplied.keys().forEach{key->if(!key.startsWith("_"))fields.put(key,supplied.get(key))};validateFields(c,fields,a.optBoolean("allowIncomplete"))}
+                    val recompute=c.has("expression") && a.has("fields")
+                    if(a.has("value") || recompute) {
+                        var v=if(recompute)Expressions.eval(c.getJSONObject("expression"),fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap())else a.s("value").ifEmpty{null}?.let(::decimal)
+                        if(fields.s("flow")!="transfer"){if(c.s("role")=="expense")v=if(fields.s("flow")=="refund")v?.abs() else v?.abs()?.negate();if(c.s("role")=="income")v=v?.abs()}
                         if(c.s("kind")=="ALLOCATION")require(v==null || v>=BigDecimal.ZERO)
                         if(v!=null && c.s("role") in setOf("income","expense","balance","accountChange"))v=v.setScale(c.optInt("decimalPlaces",2),java.math.RoundingMode.UNNECESSARY)
-                        r.put("value",v?.toPlainString() ?: JSONObject.NULL)
+                        r.put("value",v?.toPlainString() ?: JSONObject.NULL);fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",store.one("atlas_objects",r.s("metric_id"))!!.optLong("revision",1))
+                        if(c.s("role") in setOf("income","expense","balance","accountChange")){if(v==null)fields.remove("_minorUnits")else fields.put("_minorUnits",v.movePointRight(c.optInt("decimalPlaces",2)).toBigIntegerExact().toString())}
                     }
-                    if(a.has("date")) {LocalDate.parse(a.getString("date"));if(r.s("local_date")!=a.getString("date")){r.put("occurred_at",JSONObject.NULL);r.put("start_at",JSONObject.NULL);r.put("end_at",JSONObject.NULL);r.put("precision","DATE")};r.put("local_date",a.getString("date"))}
-                    if(a.has("fields")){val f=a.getJSONObject("fields");val c=store.config(r.s("metric_id"));validateFields(c,f,a.optBoolean("allowIncomplete"));r.put("fields_json",f.toString());if(c.has("expression")){val vars=f.keys().asSequence().mapNotNull{k->f.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap();r.put("value",Expressions.eval(c.getJSONObject("expression"),vars).toPlainString())}}
-                    if(a.has("value")) {val f=JSONObject(r.s("fields_json"));val c=store.config(r.s("metric_id"));f.put("_unitVersion",c.optInt("unitVersion",0));if(c.s("role") in setOf("income","expense","balance","accountChange")){if(r.s("value").isEmpty()) f.remove("_minorUnits") else f.put("_minorUnits",decimal(r.s("value")).movePointRight(c.optInt("decimalPlaces",2)).toBigIntegerExact().toString())};r.put("fields_json",f.toString())}
+                    if(a.has("date")){LocalDate.parse(a.getString("date"));require(a.getString("date")==r.s("local_date") || r.s("start_at").isEmpty() || a.optBoolean("clearTime")){"修改时段日期需同时修改起止时间，或选择仅保留时长"};r.put("local_date",a.getString("date"))}
+                    if(a.optBoolean("clearTime")){r.put("start_at",JSONObject.NULL);r.put("end_at",JSONObject.NULL);r.put("occurred_at",JSONObject.NULL);r.put("precision","DATE")}
+                    if(a.has("startAt") || a.has("endAt")){require(c.s("kind")=="ALLOCATION");val start=Instant.parse(a.s("startAt",r.s("start_at")));val end=Instant.parse(a.s("endAt",r.s("end_at")));require(end>=start);val zone=ZoneId.of(a.s("zone",r.s("zone")));require(start.atZone(zone).toLocalDate().toString()==r.s("local_date") || c.s("role")=="sleep");r.put("start_at",start.toString());r.put("end_at",end.toString());r.put("zone",zone.id);r.put("precision","INTERVAL");r.put("value",Units.convert(secondsBetween(start,end),"s",c.s("unit")).toPlainString())}
+                    if(r.s("start_at").isNotEmpty() && a.has("value") && !a.has("startAt") && !a.has("endAt")){val duration=Units.convert(secondsBetween(Instant.parse(r.s("start_at")),Instant.parse(r.s("end_at"))),"s",c.s("unit"));require(r.s("value").isNotEmpty() && decimal(r.s("value")).compareTo(duration)==0){"时长与原时段不一致，请修改起止时间或选择仅保留时长"}}
+                    if(r.s("occurred_at").isNotEmpty())require(Instant.parse(r.s("occurred_at")).atZone(ZoneId.of(r.s("zone"))).toLocalDate().toString()==r.s("local_date")){"发生日期与原时刻不一致"}
+                    r.put("fields_json",fields.toString())
                 } else r.put("deleted",if(action=="atlas.deleteRecord") 1 else 0)
                 r.put("updated_at",now());r.put("revision",r.getLong("revision")+1);store.put("atlas_facts",r);indexFields(r);return obj("id" to r.s("id"))
             }

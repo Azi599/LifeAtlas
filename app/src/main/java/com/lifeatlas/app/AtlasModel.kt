@@ -48,7 +48,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         work("正在理解需求") {
             if(input.trim().startsWith("{")) return@work actions.execute(JSONObject(input))
             Offline.plan(input,store)?.let{return@work actions.execute(it)}
-            val context=obj("objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""))
+            val context=obj("appearance" to ThemeRepository(store).appearance(),"currentTheme" to ThemeRepository(store).current(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""))
             var plan=planner.plan(settings.ai(),input,context,state.value.image)
             var attempt=0
             while(true) {

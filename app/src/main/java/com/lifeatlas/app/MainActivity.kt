@@ -73,7 +73,7 @@ class MainActivity:ComponentActivity() {
 }
 
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit,onVoice:()->Unit) {
-    val state by vm.ui.collectAsState();var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
+    val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
     var timeline by rememberSaveable{mutableStateOf(false)}
     var objectCache by remember{mutableStateOf<Map<String,JSONObject>>(emptyMap())}
@@ -97,16 +97,18 @@ class MainActivity:ComponentActivity() {
         containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onBackground,
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
             Text("Life Atlas",style=MaterialTheme.typography.headlineSmall)
-            if(page=="workspace") {
+            if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }},
+        bottomBar={Column(Modifier.imePadding()) {
+            if(page=="workspace") Surface(Modifier.fillMaxWidth()) {Column(Modifier.padding(horizontal=18.dp,vertical=8.dp)) {
                 OutlinedTextField(command,{command=it;vm.saveDraft(it)},modifier=Modifier.fillMaxWidth().padding(top=10.dp),label={Text("输入")},minLines=1,maxLines=4)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {Button(enabled=!state.busy && command.isNotBlank(),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "执行")};TextButton(onClick=onVoice){Text("语音")};TextButton(onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}}
                 if(state.image!=null) TextButton(onClick=vm::clearImage){Text("移除图片")}
-            }
-            if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        }},
-        bottomBar={NavigationBar {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}}
+            }}
+            if(!keyboard)NavigationBar {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}
+        }}
     ) {padding->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
             when(page) {
                 "workspace" -> {
@@ -157,13 +159,15 @@ class MainActivity:ComponentActivity() {
                 }
                 "settings" -> {
                     item{Text("我的",style=MaterialTheme.typography.headlineSmall)}
-                    item{SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
+                    item{SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin,onSubpage={settingsSubpage=it})}
+                    if(!settingsSubpage) {
                     item{Text("插件中心",style=MaterialTheme.typography.titleLarge);TextButton(onClick={pluginWizard=true}){Text("创建功能包")}}
                     items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${pluginState(p.s("status"))}");TextButton(onClick={vm.action("atlas.rollbackPlugin",obj("pluginId" to p.s("plugin_id")),"回退插件")}){Text("回退")};TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
                     item{Text("工作流",style=MaterialTheme.typography.titleLarge);TextButton(onClick={workflowDialog=true}){Text("新建工作流")}}
                     items(state.workflows,key={it.s("id")}){Text(it.s("title"))}
                     item{Text("应用扩展与更新",style=MaterialTheme.typography.titleLarge);TextButton(onClick={buildDialog=true}){Text("新增原生能力")}}
                     items(state.builds,key={it.s("id")}){b->BuildCard(b,vm)}
+                    }
                 }
             }
             item{Spacer(Modifier.height(12.dp))}

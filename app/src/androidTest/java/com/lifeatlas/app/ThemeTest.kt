@@ -14,7 +14,7 @@ class ThemeTest {
     @Test fun arbitraryColorsKeepReadableControlsAndDynamicFields() {
         val config=ThemeDefaults.config();config.getJSONObject("light").put("primary","#FFFEEE").put("surface","#FFFFFF").put("text","#EEEEEE")
         var foreground=Color.White;var background=Color.White;var action=Color.White
-        rule.setContent{AtlasTheme(config,false){SideEffect{foreground=MaterialTheme.colorScheme.onSurface;background=MaterialTheme.colorScheme.surface;action=MaterialTheme.colorScheme.primary};DynamicField(obj("id" to "hours","title" to "独立生成的长字段名称：本次观测的持续时间","type" to "decimal"),"12"){} }}
+        rule.setContent{AtlasTheme(config,false){val colors=MaterialTheme.colorScheme;SideEffect{foreground=colors.onSurface;background=colors.surface;action=colors.primary};DynamicField(obj("id" to "hours","title" to "独立生成的长字段名称：本次观测的持续时间","type" to "decimal"),"12"){} }}
         rule.waitForIdle();assertTrue(contrastRatio(foreground,background)>=4.5);assertTrue(contrastRatio(action,background)>=4.5)
         rule.onNodeWithText("独立生成的长字段名称：本次观测的持续时间").assertExists();rule.onNodeWithText("12").assertExists()
     }

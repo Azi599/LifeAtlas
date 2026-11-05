@@ -3,15 +3,19 @@ package com.lifeatlas.app
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
 
-@Composable fun SettingsPanel(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit) {
-    var panel by remember{mutableStateOf("")};var endpoint by remember{mutableStateOf(vm.settings.ai().endpoint)};var model by remember{mutableStateOf(vm.settings.ai().model)};var key by remember{mutableStateOf(vm.settings.ai().key)}
+@Composable fun SettingsPanel(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onSubpage:(Boolean)->Unit={}) {
+    var panel by rememberSaveable{mutableStateOf("")};var endpoint by remember{mutableStateOf(vm.settings.ai().endpoint)};var model by remember{mutableStateOf(vm.settings.ai().model)};var key by remember{mutableStateOf(vm.settings.ai().key)}
     var buildUrl by remember{mutableStateOf(vm.settings.prefs.getString("build_url","") ?: "")};var buildToken by remember{mutableStateOf(vm.settings.getSecret("build_token"))};var repo by remember{mutableStateOf(vm.settings.prefs.getString("build_repo","Azi599/LifeAtlas") ?: "")};var branch by remember{mutableStateOf(vm.settings.prefs.getString("build_branch","main") ?: "main")};var githubToken by remember{mutableStateOf(vm.settings.getSecret("github_build_token"))};var json by remember{mutableStateOf("")};var updateUrl by remember{mutableStateOf(vm.settings.prefs.getString("update_url","") ?: "")}
+    LaunchedEffect(panel){onSubpage(panel.isNotEmpty())}
+    BackHandler(panel.isNotEmpty()){panel=""}
     var showRecovery by remember{mutableStateOf(false)};var recovery by remember{mutableStateOf<String?>(null)}
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
         if(panel.isEmpty())listOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理","plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明").forEach{(id,title)->TextButton(modifier=Modifier.fillMaxWidth(),onClick={panel=id}){Text(title,Modifier.weight(1f));Text("›")}};if(panel.isNotEmpty())TextButton(onClick={panel=""}){Text("返回")}
