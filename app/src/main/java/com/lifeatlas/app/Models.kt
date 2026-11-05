@@ -18,15 +18,17 @@ val kinds=setOf("SNAPSHOT","CHANGE","ALLOCATION")
 val objectTypes=setOf("WORKSPACE","FOLDER","PROJECT","METRIC","DASHBOARD","VIEW","WORKFLOW")
 val aggregateMethods=setOf("SUM","MEAN","WEIGHTED_MEAN","LAST_SNAPSHOT","UNION_DURATION","MEDIAN","MIN","MAX","COUNT")
 fun validateMetric(config:JSONObject) {
+    require(config.toString().length<=256000){"指标定义过大"}
     require(config.s("kind") in kinds) { "请选择数据语义" }
     if(config.s("kind")=="ALLOCATION")require(Units.isTime(config.s("unit"))){"时间分配单位请选择秒、分钟或小时"}
+    when(config.s("role")){"balance"->require(config.s("kind")=="SNAPSHOT");"income","expense","accountChange"->require(config.s("kind")=="CHANGE");"sleep"->require(config.s("kind")=="ALLOCATION")}
     val method=config.s("aggregate",if(config.s("kind")=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")
     require(method in aggregateMethods) { "不支持的统计规则：$method" }
     require(config.s("unit").length<=30) { "单位过长" }
     val fields=config.optJSONArray("fields") ?: JSONArray()
     require(fields.length()<=40) { "字段超过40个" }
     val ids=HashSet<String>()
-    fields.objects().forEach { f -> require(f.s("id").matches(Regex("[a-zA-Z][a-zA-Z0-9_]{0,39}")) && ids.add(f.s("id"))) { "字段标识无效或重复" };require(f.s("type") in setOf("text","decimal","date","boolean","choice")) { "未知字段类型" };if(f.s("type")=="choice") require((f.optJSONArray("options")?.length() ?: 0) in 1..30) { "选项不能为空" } }
+    fields.objects().forEach { f -> require(f.s("title",f.s("id")).length<=120){"字段名称过长"};require(f.s("id").matches(Regex("[a-zA-Z][a-zA-Z0-9_]{0,39}")) && ids.add(f.s("id"))) { "字段标识无效或重复" };require(f.s("type") in setOf("text","decimal","date","boolean","choice")) { "未知字段类型" };if(f.s("type")=="choice") require((f.optJSONArray("options")?.length() ?: 0) in 1..30) { "选项不能为空" };if(f.s("type")=="choice"){val options=f.getJSONArray("options");for(i in 0 until options.length())require(options.getString(i).length<=200){"选项文字过长"}} }
 }
 
 object MathEngine {
@@ -86,4 +88,31 @@ object Units {
     fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};val numerator=value.multiply(f.second.toBigDecimal());return try{numerator.divide(t.second.toBigDecimal())}catch(_:ArithmeticException){numerator.divide(t.second.toBigDecimal(),MathContext(24))}}
     fun isTime(unit:String)=definitions[unit]?.first=="time"
     fun currency(unit:String)=definitions[unit]?.first?.takeIf{it=="CNY"} ?: unit
+}
+
+fun validateFields(config:JSONObject,fields:JSONObject,allowIncomplete:Boolean=false) {
+    val definitions=config.optJSONArray("fields") ?: JSONArray()
+    definitions.objects().forEach{f->val value=fields.s(f.s("id"));require(allowIncomplete || !f.optBoolean("required") || value.isNotBlank()){ "请填写 ${f.s("title")}" }
+        if(value.isNotEmpty())when(f.s("type")) {
+            "decimal"->{val number=decimal(value);if(f.has("minimum"))require(number>=decimal(f.get("minimum").toString())){"${f.s("title")}低于下限"};if(f.has("maximum"))require(number<=decimal(f.get("maximum").toString())){"${f.s("title")}超过上限"}}
+            "date"->LocalDate.parse(value)
+            "boolean"->require(value in setOf("true","false")){"是/否字段无效"}
+            "choice"->require((f.optJSONArray("options") ?: JSONArray()).let{a->(0 until a.length()).any{a.getString(it)==value}}){"选项无效"}
+            else->require(value.length<=4000){"文字过长"}
+        }
+    }
+}
+
+fun secondsBetween(start:Instant,end:Instant):BigDecimal {val duration=Duration.between(start,end);return duration.seconds.toBigDecimal()+BigDecimal(duration.nano).movePointLeft(9)}
+fun timerIntervals(timer:JSONObject,context:android.content.Context):List<Pair<Instant,Instant>> {
+    val periods=JSONArray(timer.s("periods")).objects().map{Instant.parse(it.s("start")) to Instant.parse(it.s("end"))}.toMutableList()
+    if(timer.s("running_at").isNotEmpty()) {val start=Instant.parse(timer.s("running_at"));val sameBoot=timer.optInt("boot_count",-1)==android.provider.Settings.Global.getInt(context.contentResolver,"boot_count",0);val end=if(sameBoot && !timer.isNull("elapsed_start"))start.plusMillis((android.os.SystemClock.elapsedRealtime()-timer.getLong("elapsed_start")).coerceAtLeast(0))else maxOf(start,Instant.now());periods.add(start to end)}
+    return periods
+}
+fun timerDaily(timer:JSONObject,config:JSONObject,context:android.content.Context):Map<String,BigDecimal> {
+    val zone=ZoneId.of(timer.s("zone"));val result=linkedMapOf<String,BigDecimal>()
+    timerIntervals(timer,context).forEach{(start,end)->
+        val slices=if(config.s("role")=="sleep") mapOf(Instant.parse(timer.s("created_at")).atZone(zone).toLocalDate() to (start to end)) else MathEngine.splitByDate(start,end,zone).keys.associateWith{d->maxOf(start,d.atStartOfDay(zone).toInstant()) to minOf(end,d.plusDays(1).atStartOfDay(zone).toInstant())}
+        slices.forEach{(date,span)->val value=Units.convert(secondsBetween(span.first,span.second),"s",config.s("unit"));result[date.toString()]=(result[date.toString()] ?: BigDecimal.ZERO)+value}
+    };return result
 }

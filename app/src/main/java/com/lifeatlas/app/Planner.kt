@@ -13,6 +13,7 @@ class Planner(private val actions:Actions) {
         require(config.key.isNotBlank()) {"请先配置 AI API 密钥，或使用手动操作"}
         val prompt="""你是 Life Atlas 的操作规划器。今天 ${LocalDate.now()}，时区 ${ZoneId.systemDefault().id}。
 返回严格 JSON，不使用 Markdown。统计数字只能通过宿主工具取得。仅使用真实对象 ID；新建动作的输出使用 {"${'$'}ref":"s1.id"} 引用。
+外部构建/更新步骤与其他步骤组合时使用 atomic=false，独立本地原子组默认 atomic=true。
 格式：{"requestId":"随机字符串","title":"操作摘要","steps":[{"stepId":"s1","actionId":"atlas.createObject","args":{...}}]}。
 也可先检索：{"tools":[{"actionId":"atlas.query或atlas.aggregate或atlas.capabilities","args":{...}}]}。最多6轮。
 存在歧义时返回 {"question":"问题","options":[{"title":"完整易读选项","plan":{...}}]}。
@@ -27,7 +28,10 @@ class Planner(private val actions:Actions) {
         val messages=JSONArray().put(obj("role" to "system","content" to prompt)).put(obj("role" to "user","content" to content))
         repeat(6) {
             val response=chat(config,messages);val plan=parse(response)
-            if(plan.has("steps") || plan.has("question")) return plan.put("rawInput",input)
+            if(plan.has("steps") || plan.has("question")) {
+                plan.put("requestId",uid());(plan.optJSONArray("options") ?: JSONArray()).objects().forEach{it.optJSONObject("plan")?.put("requestId",uid())}
+                return plan.put("rawInput",input)
+            }
             val tools=plan.optJSONArray("tools") ?: error("AI 没有返回可执行计划")
             require(tools.length() in 1..6)
             val results=JSONArray();tools.objects().forEach{t->require(t.s("actionId") in setOf("atlas.query","atlas.aggregate","atlas.capabilities","atlas.correlation","atlas.searchObjects","finance.balance")){"查询工具无效"};results.put(runCatching{actions.dispatch(t.s("actionId"),t.optJSONObject("args") ?: JSONObject())}.getOrElse{obj("error" to it.message)})}

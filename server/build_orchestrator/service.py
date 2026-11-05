@@ -15,7 +15,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
 DATABASE = os.environ.get("ATLAS_JOBS_DB", "/data/jobs.sqlite3")
 REPO = os.environ.get("GITHUB_REPOSITORY", "Azi599/LifeAtlas")
@@ -44,6 +44,10 @@ def update(job_id, **values):
     with database() as db:
         db.execute("UPDATE jobs SET " + ",".join(f"{key}=?" for key in values) + " WHERE id=?", [*values.values(), job_id])
 
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *_args):
+        return None
+
 def request_json(url, token, method="GET", body=None):
     if urlsplit(url).scheme != "https":
         raise ValueError("HTTPS endpoint required")
@@ -52,7 +56,7 @@ def request_json(url, token, method="GET", body=None):
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
-    with urlopen(Request(url, data=data, headers=headers, method=method), timeout=120) as response:
+    with build_opener(NoRedirect()).open(Request(url, data=data, headers=headers, method=method), timeout=300) as response:
         payload = response.read(2_000_001)
         if len(payload) > 2_000_000:
             raise ValueError("Remote response too large")
@@ -72,6 +76,8 @@ def validate_changes(changes):
         parts = PurePosixPath(path).parts
         if not path or path.startswith("/") or ".." in parts or path in seen or "\\" in path:
             raise ValueError("Invalid source path")
+        if path in {"app/src/test/java/com/lifeatlas/app/MathEngineTest.kt", "app/src/androidTest/java/com/lifeatlas/app/StorageTest.kt", "app/src/androidTest/java/com/lifeatlas/app/UiTest.kt"}:
+            raise ValueError("Core regression tests are protected; add a new test file")
         permitted = path.startswith(("app/src/main/java/", "app/src/main/res/", "app/src/test/java/", "app/src/androidTest/java/")) or path == "app/src/main/AndroidManifest.xml"
         if not permitted or not isinstance(content, str) or len(content.encode()) > 300_000:
             raise ValueError("Source change exceeds allowed scope")

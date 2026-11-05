@@ -28,6 +28,13 @@ class UiTest {
         rule.onNodeWithText("植物养护测试").performScrollTo().performClick()
         rule.onNodeWithText("浇水量").performScrollTo().performClick()
         rule.onNodeWithText("新增记录").assertExists()
-        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("screencap -p /sdcard/Download/lifeatlas-project.png").close()
+        rule.waitForIdle()
+        val instrumentation=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        instrumentation.waitForIdleSync();Thread.sleep(600)
+        val bitmap=instrumentation.uiAutomation.takeScreenshot()
+        val context=instrumentation.targetContext
+        val values=android.content.ContentValues().apply{put(android.provider.MediaStore.Images.Media.DISPLAY_NAME,"lifeatlas-project.png");put(android.provider.MediaStore.Images.Media.MIME_TYPE,"image/png");put(android.provider.MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LifeAtlas")}
+        val uri=context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values)!!
+        context.contentResolver.openOutputStream(uri)!!.use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
     }
 }

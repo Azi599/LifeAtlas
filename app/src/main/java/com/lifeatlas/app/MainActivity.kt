@@ -31,7 +31,6 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.*
 
-val atlasColors=lightColorScheme(primary=Color(0xff68538a),secondary=Color(0xff52645b),background=Color(0xfffaf9fc),surface=Color(0xfffaf9fc),onSurface=Color(0xff25222b))
 class MainActivity:ComponentActivity() {
     private lateinit var vm:AtlasModel
     private var csv=false
@@ -49,7 +48,11 @@ class MainActivity:ComponentActivity() {
         setContent {
             val appState by vm.ui.collectAsState()
             val dark=when(appState.theme){"dark"->true;"light"->false;else->androidx.compose.foundation.isSystemInDarkTheme()}
-            MaterialTheme(colorScheme=if(dark)darkColorScheme(primary=Color(0xffcdb6ed)) else atlasColors) {
+            SideEffect {
+                val flags=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                window.insetsController?.setSystemBarsAppearance(if(dark)0 else flags,flags)
+            }
+            AtlasTheme(JSONObject(appState.themeConfig),dark,appState.compact) {
                 App(vm,
                     onExport={isCsv->errorExport=false;csv=isCsv;export.launch(if(isCsv) "LifeAtlas-records.csv" else "LifeAtlas-backup.jsonl")},
                     onCsv={csvPicker.launch(arrayOf("text/*","application/csv","*/*"))},
@@ -89,17 +92,18 @@ class MainActivity:ComponentActivity() {
     BackHandler(enabled=selected!=null || page!="workspace") {if(selected!=null) selected=chosen?.s("parent_id")?.ifEmpty{null} else page="workspace"}
     LaunchedEffect(state.pending){if(state.pending!=null){page="workspace";selected=null}}
     LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}}
-    Scaffold(
+    AtlasBackdrop { Scaffold(
+        containerColor=Color.Transparent,
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
             Text("Life Atlas",style=MaterialTheme.typography.headlineSmall)
             if(page=="workspace") {
-                OutlinedTextField(command,{command=it;vm.saveDraft(it)},modifier=Modifier.fillMaxWidth().padding(top=10.dp),label={Text("记录、查询，或创造一个新功能")},minLines=1,maxLines=4)
+                OutlinedTextField(command,{command=it;vm.saveDraft(it)},modifier=Modifier.fillMaxWidth().padding(top=10.dp),label={Text("输入")},minLines=1,maxLines=4)
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {Button(enabled=!state.busy && command.isNotBlank(),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "执行")};TextButton(onClick=onVoice){Text("语音")};TextButton(onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}}
                 if(state.image!=null) TextButton(onClick=vm::clearImage){Text("移除图片")}
             }
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }},
-        bottomBar={NavigationBar {listOf("workspace" to "工作区","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "设置").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={Text(listOf("◎","▦","≡","↗","⚙")[i])},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}}
+        bottomBar={NavigationBar {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}}
     ) {padding->
         LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
@@ -107,7 +111,7 @@ class MainActivity:ComponentActivity() {
                 "workspace" -> {
                     item {Row {TextButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")};TextButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")};TextButton(onClick={create=true}){Text("手动创建")}}}
                     state.pending?.let {pending->item {PlanPreview(pending,onConfirm={vm.execute(it,true)},onCancel=vm::clearPending)}}
-                    state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it})}}
+                    state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)})}}
                     item {Text("我的空间",style=MaterialTheme.typography.titleLarge)}
                     val layouts=state.layouts.associateBy{it.s("object_id")}
                     val cards=objects.filter{it.s("type") in setOf("PROJECT","DASHBOARD","VIEW") && layouts[it.s("id")]?.optInt("hidden")!=1}.sortedBy{layouts[it.s("id")]?.optInt("position") ?: 999}.take(8)
@@ -116,7 +120,7 @@ class MainActivity:ComponentActivity() {
                     if(state.timers.isNotEmpty()) item{Text("进行中的活动",style=MaterialTheme.typography.titleMedium)}
                     items(state.timers,key={it.s("id")}) {TimerCard(it,objects,vm)}
                     item{Text("操作历史",style=MaterialTheme.typography.titleMedium)}
-                    items(state.operations.take(8),key={it.s("id")}) {op->Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)){Text(op.s("title"));Text(op.s("created_at").take(19).replace('T',' '),style=MaterialTheme.typography.bodySmall);Text(if(op.optInt("undone")>0) "已撤销" else "已提交",style=MaterialTheme.typography.labelMedium);val result=JSONObject(op.s("result"));if(result.has("steps")) {val ids=linkedSetOf<String>();val steps=result.getJSONObject("steps");steps.keys().forEach{k->steps.optJSONObject(k)?.s("id")?.let(ids::add)};ids.filter{id->objects.any{it.s("id")==id}}.forEach{id->TextButton(onClick={open(id)}){Text("打开结果")}}}}}}
+                    items(state.operations.take(8),key={it.s("id")}) {op->Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)){Text(op.s("title"));Text(formatInstant(op.s("created_at")),style=MaterialTheme.typography.bodySmall);Text(if(op.optInt("undone")>0) "已撤销" else "已提交",style=MaterialTheme.typography.labelMedium);val result=JSONObject(op.s("result"));if(result.has("steps")) {val ids=linkedSetOf<String>();val steps=result.getJSONObject("steps");steps.keys().forEach{k->steps.optJSONObject(k)?.s("id")?.let(ids::add)};ids.filter{id->objects.any{it.s("id")==id}}.forEach{id->TextButton(onClick={open(id)}){Text("打开结果")}}}}}}
                 }
                 "spaces" -> {
                     item{Text(chosen?.s("title") ?: "我的空间",style=MaterialTheme.typography.headlineSmall)}
@@ -139,18 +143,18 @@ class MainActivity:ComponentActivity() {
                 "history" -> {
                     item{Text("记录",style=MaterialTheme.typography.headlineSmall)}
                     item{TextButton(onClick={eventDialog=true}){Text("记录文字事件")};HistoryFilter(vm,state)}
-                    items(state.events,key={"event-${it.s("id")}"}){event->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(event.s("raw_input"));Text(event.s("created_at").take(10),style=MaterialTheme.typography.bodySmall)}}}
-                    items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else f.s("occurred_at").ifEmpty{f.s("start_at")},style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
+                    items(state.events,key={"event-${it.s("id")}"}){event->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(event.s("raw_input"));Text(event.s("local_date","日期未指定"),style=MaterialTheme.typography.bodySmall)}}}
+                    items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else if(f.s("precision")=="INTERVAL") formatInstant(f.s("start_at"),f.s("zone"))+" — "+formatInstant(f.s("end_at"),f.s("zone")) else formatInstant(f.s("occurred_at"),f.s("zone")),style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
                     if(state.facts.isEmpty())item{Text("所选范围没有记录")}
                 }
                 "analytics" -> {
                     item{Text("分析",style=MaterialTheme.typography.headlineSmall)}
                     item{Column {OutlinedButton(onClick={financeDialog="transfer"}){Text("转账")};OutlinedButton(onClick={financeDialog="balance"}){Text("余额")};OutlinedButton(onClick={correlationDialog=true}){Text("相关性分析")}}}
                     item{Analytics(vm,state)}
-                    state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it})}}
+                    state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)})}}
                 }
                 "settings" -> {
-                    item{Text("设置",style=MaterialTheme.typography.headlineSmall)}
+                    item{Text("我的",style=MaterialTheme.typography.headlineSmall)}
                     item{SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
                     item{Text("插件中心",style=MaterialTheme.typography.titleLarge);TextButton(onClick={pluginWizard=true}){Text("创建功能包")}}
                     items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${pluginState(p.s("status"))}");TextButton(onClick={vm.action("atlas.rollbackPlugin",obj("pluginId" to p.s("plugin_id")),"回退插件")}){Text("回退")};TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
@@ -163,16 +167,17 @@ class MainActivity:ComponentActivity() {
             item{Spacer(Modifier.height(12.dp))}
         }
     }
+    }
     financeDialog?.let{mode->FinanceDialog(objects,balance=mode=="balance",onDismiss={financeDialog=null},onExecute={id,args->vm.action(id,args,if(mode=="balance") "计算余额" else "转账");financeDialog=null})}
     if(correlationDialog)CorrelationDialog(objects,onDismiss={correlationDialog=false},onExecute={vm.action("atlas.correlation",it,"相关性分析");correlationDialog=false})
-    if(eventDialog)TextEventDialog(onDismiss={eventDialog=false},onSave={vm.action("atlas.createEvent",obj("text" to it),"记录事件");eventDialog=false})
+    if(eventDialog)TextEventDialog(onDismiss={eventDialog=false},onSave={text,date->vm.action("atlas.createEvent",obj("text" to text,"date" to date),"记录事件");eventDialog=false})
     if(pluginWizard) PluginWizard(onDismiss={pluginWizard=false},onPreview={vm.action("atlas.installPlugin",obj("manifest" to it),"预览${it.s("title")}");pluginWizard=false})
     if(workflowDialog)WorkflowDialog(objects,onDismiss={workflowDialog=false},onSave={title,spec->vm.action("atlas.workflow",obj("title" to title,"spec" to spec),"创建工作流");workflowDialog=false})
     if(buildDialog)BuildRequestDialog(onDismiss={buildDialog=false},onSave={vm.action("atlas.requestBuild",it,"创建扩展任务");buildDialog=false})
     if(create) ObjectDialog(parent=selected,objects=objects,onDismiss={create=false},onSave={type,title,config->vm.action("atlas.createObject",obj("type" to type,"title" to title,"parentId" to selected,"config" to config),"创建$title");create=false})
     edit?.let{o->ManageDialog(o,objects,vm,onDismiss={edit=null})}
     record?.let{m->RecordDialog(m,onDismiss={record=null},onSave={args->vm.action("atlas.record",args,"记录${m.s("title")}");record=null})}
-    editingFact?.let{f->EditFactDialog(f,onDismiss={editingFact=null},onSave={a->vm.action("atlas.editRecord",a,"修改记录");editingFact=null},onDelete={vm.action("atlas.deleteRecord",obj("id" to f.s("id")),"删除记录");editingFact=null})}
+    editingFact?.let{f->EditFactDialog(f,metric=objects.firstOrNull{it.s("id")==f.s("metric_id")},onDismiss={editingFact=null},onSave={a->vm.action("atlas.editRecord",a,"修改记录");editingFact=null},onDelete={vm.action("atlas.deleteRecord",obj("id" to f.s("id")),"删除记录");editingFact=null})}
     if(restoreConfirm) AlertDialog(onDismissRequest={restoreConfirm=false},title={Text("恢复备份")},text={Text("选择备份后将覆盖当前数据，并自动保存覆盖前的恢复点。")},confirmButton={TextButton(onClick={restoreConfirm=false;onRestore()}){Text("选择备份")}},dismissButton={TextButton(onClick={restoreConfirm=false}){Text("取消")}})
 }
 
@@ -181,7 +186,15 @@ class MainActivity:ComponentActivity() {
     LaunchedEffect(id,revision){linked=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){if(id==null) emptyList() else vm.store.query("SELECT o.* FROM atlas_objects o JOIN atlas_relations r ON r.to_id=o.id WHERE r.from_id=? AND o.archived=0 LIMIT 100",arrayOf(id))}}
     return linked
 }
-@Composable fun ObjectCard(o:JSONObject,onOpen:()->Unit,onEdit:()->Unit) {OutlinedCard(Modifier.fillMaxWidth().clickable(onClick=onOpen)){Column(Modifier.padding(16.dp)){Text(o.s("title"),style=MaterialTheme.typography.titleMedium);Row{Text(typeName(o.s("type")),style=MaterialTheme.typography.bodySmall,modifier=Modifier.weight(1f));TextButton(onClick=onEdit,contentPadding=PaddingValues(0.dp)){Text("管理")}}}}}
+@Composable fun ObjectCard(o:JSONObject,onOpen:()->Unit,onEdit:()->Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().clickable(onClick=onOpen).padding(vertical=8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)){Text(o.s("title"),style=MaterialTheme.typography.titleMedium);Text(typeName(o.s("type")),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+            TextButton(onClick=onEdit){Text("管理")}
+        }
+        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+    }
+}
 fun typeName(s:String)=mapOf("WORKSPACE" to "工作空间","FOLDER" to "目录","PROJECT" to "项目","METRIC" to "指标","VIEW" to "页面","DASHBOARD" to "仪表盘","WORKFLOW" to "工作流")[s] ?: s
 fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变化","ALLOCATION" to "时间分配")[s] ?: s
 @Composable fun PlanPreview(plan:JSONObject,onConfirm:(JSONObject)->Unit,onCancel:()->Unit) {
@@ -189,7 +202,7 @@ fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变
         Text(plan.s("question",plan.s("title","操作预览")),style=MaterialTheme.typography.titleMedium)
         if(plan.has("question")) (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan"))}){Text(choice.s("title"))}}
         else {
-            (plan.optJSONArray("steps") ?: JSONArray()).objects().forEach{step->val a=step.optJSONObject("args") ?: JSONObject();val m=a.optJSONObject("manifest");Text(if(m!=null) "创建功能：${m.s("title")}" else "${actionName(step.s("actionId"))} ${a.s("title")}");if(m!=null)(m.optJSONArray("metrics") ?: JSONArray()).objects().forEach{Text("${it.s("title")} · ${kindName(it.s("kind"))} · ${it.s("unit")}")}}
+            (plan.optJSONArray("steps") ?: JSONArray()).objects().forEach{step->val a=step.optJSONObject("args") ?: JSONObject();val m=a.optJSONObject("manifest");Text(if(m!=null) "创建功能：${m.s("title")}" else "${actionName(step.s("actionId"))} ${a.s("title")}");if(m!=null){(m.optJSONArray("metrics") ?: JSONArray()).objects().forEach{Text("${it.s("title")} · ${kindName(it.s("kind"))} · ${it.s("unit")}")};FeaturePreview(m)}}
             Button(onClick={onConfirm(plan)}){Text("确认执行")}
         }
         TextButton(onClick=onCancel){Text("取消")}
@@ -209,3 +222,5 @@ fun actionName(id:String)=mapOf("atlas.createObject" to "创建对象","atlas.up
 fun pluginState(state:String)=mapOf("ACTIVE" to "已启用","DISABLED" to "已停用","SUPERSEDED" to "历史版本")[state] ?: state
 
 fun buildState(s:String)=mapOf("AWAITING_SERVICE" to "待配置构建","SUBMITTED" to "已提交","QUEUED" to "排队中","GENERATING" to "生成源码中","COMMITTING" to "提交源码中","BUILDING" to "编译与测试中","WAITING_APPROVAL" to "等待发行确认","READY_FOR_REVIEW" to "更新包已就绪","FAILED" to "构建失败","INTERRUPTED" to "任务已中断")[s] ?: s
+
+fun formatInstant(value:String,zone:String=java.time.ZoneId.systemDefault().id):String=runCatching{java.time.Instant.parse(value).atZone(java.time.ZoneId.of(zone)).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"))}.getOrDefault(value)

@@ -28,3 +28,12 @@ import java.time.YearMonth
     LaunchedEffect(state.revision,config.toString()) {runCatching{val ids=config.optJSONArray("metrics");reports=if(ids!=null)(0 until ids.length()).map{vm.summary(ids.getString(it),config.s("from"),config.s("to"))} else (config.optJSONArray("results") ?: JSONArray()).objects()}.onFailure{error=it.message ?: "读取失败"}}
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {if(error.isNotEmpty())Text(error);reports.forEach{r->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(state.objects.firstOrNull{it.s("id")==r.s("metricId")}?.s("title") ?: "指标");Text("${r.s("value","暂无数据")} ${r.s("unit")}",style=MaterialTheme.typography.headlineSmall);Text("${methodName(r.s("method"))} · ${r.optLong("count")} 条");Text("${r.s("from")} — ${r.s("to")}",style=MaterialTheme.typography.bodySmall)}}}}
 }
+
+@Composable fun FeaturePreview(manifest:JSONObject) {
+    val metrics=(manifest.optJSONArray("metrics") ?: JSONArray()).objects();var key by remember(manifest.toString()){mutableStateOf(metrics.firstOrNull()?.s("key") ?: "")};var value by remember{mutableStateOf("")};var fields by remember{mutableStateOf<Map<String,String>>(emptyMap())}
+    val metric=metrics.firstOrNull{it.s("key")==key}
+    Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Pick("表单预览",metrics.map{it.s("key") to it.s("title")},key){key=it;fields=emptyMap();value=""}
+        if(metric!=null){OutlinedTextField(value,{value=it},label={Text("数值 · ${metric.s("unit")}")},modifier=Modifier.fillMaxWidth());(metric.optJSONArray("fields") ?: JSONArray()).objects().forEach{f->DynamicField(f,fields[f.s("id")] ?: ""){fields=fields+(f.s("id") to it)}}
+    }
+}

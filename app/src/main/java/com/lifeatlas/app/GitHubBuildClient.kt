@@ -18,8 +18,8 @@ class GitHubBuildClient(private val settings:Settings) {
             require(c.responseCode in 200..299){"GitHub HTTP ${c.responseCode}"};val text=c.inputStream.bufferedReader().use{it.readText()};return if(text.isBlank())JSONObject() else JSONObject(text)
         }finally{c.disconnect()}
     }
-    fun submit(spec:JSONObject):JSONObject {
-        val id=uid().replace("-","");api("actions/workflows/forge.yml/dispatches",obj("ref" to settings.prefs.getString("build_branch","main"),"inputs" to obj("request_id" to id,"request_json" to spec.toString())))
+    fun submit(spec:JSONObject,requestId:String=uid()):JSONObject {
+        val id=requestId.replace("-","");api("actions/workflows/forge.yml/dispatches",obj("ref" to settings.prefs.getString("build_branch","main"),"inputs" to obj("request_id" to id,"request_json" to spec.toString())))
         return obj("id" to "gh:$id","status" to "SUBMITTED","detail" to "GitHub 已接收扩展任务")
     }
     fun status(remoteId:String):JSONObject {
@@ -30,7 +30,7 @@ class GitHubBuildClient(private val settings:Settings) {
         if(native!=null){val state=when(native.s("status")){"completed"->if(native.s("conclusion")=="success") "READY_FOR_REVIEW" else "FAILED";"waiting","pending"->"WAITING_APPROVAL";else->"BUILDING"};return obj("id" to remoteId,"status" to state,"detail" to (native.s("conclusion").ifEmpty{native.s("status")}),"artifactUrl" to native.s("html_url"),"previewUrl" to preview,"runId" to native.getLong("id"))}
         val forge=api("actions/workflows/forge.yml/runs?event=workflow_dispatch&per_page=100").getJSONArray("workflow_runs").objects().firstOrNull{it.s("display_title")=="Forge $id"}
         val status=if(forge==null) "SUBMITTED" else if(forge.s("status")=="completed" && forge.s("conclusion")!="success") "FAILED" else "GENERATING"
-        return obj("id" to remoteId,"status" to status,"detail" to (forge?.s("conclusion")?.ifEmpty{forge.s("status")} ?: "已提交"),"previewUrl" to preview,"artifactUrl" to forge?.s("html_url"))
+        return obj("id" to remoteId,"status" to status,"detail" to (forge?.s("conclusion")?.ifEmpty{forge?.s("status").orEmpty()} ?: "已提交"),"previewUrl" to preview,"artifactUrl" to forge?.s("html_url"))
     }
     fun downloadSigned(context:Context,remoteId:String):File {
         val status=status(remoteId);require(status.s("status")=="READY_FOR_REVIEW"){ "构建与签名尚未完成" }

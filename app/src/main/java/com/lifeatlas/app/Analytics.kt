@@ -20,13 +20,19 @@ import java.time.YearMonth
 @Composable fun MetricPanel(metric:JSONObject,vm:AtlasModel,revision:Int,onRecord:()->Unit,chartType:String="line") {
     var month by remember{mutableStateOf(YearMonth.now().toString())};var result by remember{mutableStateOf<JSONObject?>(null)};var points by remember{mutableStateOf<List<JSONObject>>(emptyList())};var error by remember{mutableStateOf("")};var request by remember{mutableIntStateOf(0)}
     val config=remember(metric){JSONObject(metric.s("config"))}
-    LaunchedEffect(metric.s("id"),revision,request){runCatching{val ym=YearMonth.parse(month);result=vm.summary(metric.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString());points=vm.chart(metric.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString());error=""}.onFailure{error=it.message ?: "日期无效"}}
+    val live=vm.ui.value.timers.any{it.s("metric_id")==metric.s("id")}
+    LaunchedEffect(metric.s("id"),revision,request,live){
+        do {
+            try{val ym=YearMonth.parse(month);result=vm.summary(metric.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString());points=vm.chart(metric.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString());error=""}catch(e:Exception){if(e is kotlinx.coroutines.CancellationException)throw e;error=e.message ?: "日期无效";break}
+            if(live)kotlinx.coroutines.delay(1000)
+        }while(live)
+    }
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Text(metric.s("title"),style=MaterialTheme.typography.titleLarge);Text("${kindName(config.s("kind"))} · ${config.s("unit")}")
         Button(onClick=onRecord){Text("新增记录")}
         if(config.s("kind")=="ALLOCATION")OutlinedButton(onClick={vm.action("time.start",obj("metricId" to metric.s("id")),"开始${metric.s("title")}计时")}){Text("开始计时")}
         OutlinedTextField(month,{month=it},label={Text("分析月份 YYYY-MM")},modifier=Modifier.fillMaxWidth());TextButton(onClick={request++}){Text("查看月份")}
-        result?.let{r->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(methodName(r.s("method")),style=MaterialTheme.typography.labelLarge);Text("${r.s("value","暂无数据")} ${r.s("unit")}",style=MaterialTheme.typography.headlineMedium);Text("${r.optLong("count")} 条有效数值记录",style=MaterialTheme.typography.bodySmall)}}}
+        result?.let{r->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(methodName(r.s("method")),style=MaterialTheme.typography.labelLarge);Text("${r.s("value","暂无数据")} ${r.s("unit")}",style=MaterialTheme.typography.headlineMedium);Text(if(r.s("method")=="UNION_DURATION") "${r.optInt("intervalCount")} 段区间" else "${r.optLong("usedCount",r.optLong("count"))} 条有效数值记录",style=MaterialTheme.typography.bodySmall);if(r.optBoolean("live"))Text("计时中",style=MaterialTheme.typography.labelMedium)}}}
         if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
         if(points.isEmpty())Text("该月暂无趋势数据") else Trend(points,config.s("unit"),chartType)
         TextButton(onClick={val ym=runCatching{YearMonth.parse(month)}.getOrNull();if(ym!=null)vm.action("atlas.report",obj("title" to "${metric.s("title")} $month 报告","metrics" to org.json.JSONArray().put(metric.s("id")),"from" to ym.atDay(1).toString(),"to" to ym.atEndOfMonth().toString()),"生成月度报告")}){Text("保存月度报告")}
@@ -53,18 +59,18 @@ import java.time.YearMonth
     }
 }
 @Composable fun HistoryFilter(vm:AtlasModel,state:AtlasState) {
-    var metric by remember{mutableStateOf("")};var from by remember{mutableStateOf(YearMonth.now().atDay(1).toString())};var to by remember{mutableStateOf(LocalDate.now().toString())};var offset by remember{mutableIntStateOf(0)}
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {Pick("指标",listOf("" to "全部指标")+state.objects.filter{it.s("type")=="METRIC"}.map{it.s("id") to it.s("title")},metric){metric=it};OutlinedTextField(from,{from=it},label={Text("开始日期")},modifier=Modifier.fillMaxWidth());OutlinedTextField(to,{to=it},label={Text("结束日期")},modifier=Modifier.fillMaxWidth());Row{Button(onClick={offset=0;vm.history(metric.ifEmpty{null},from,to,offset)}){Text("查询")};TextButton(enabled=state.facts.isNotEmpty(),onClick={offset+=50;vm.history(metric.ifEmpty{null},from,to,offset)}){Text("加载更多")}}}
+    var metric by remember{mutableStateOf(state.historyMetric)};var from by remember{mutableStateOf(state.historyFrom)};var to by remember{mutableStateOf(state.historyTo)};var offset by remember{mutableIntStateOf(state.historyOffset)}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {Pick("指标",listOf("" to "全部指标")+state.objects.filter{it.s("type")=="METRIC"}.map{it.s("id") to it.s("title")},metric){metric=it};OutlinedTextField(from,{from=it},label={Text("开始日期")},modifier=Modifier.fillMaxWidth());OutlinedTextField(to,{to=it},label={Text("结束日期")},modifier=Modifier.fillMaxWidth());Row{Button(onClick={offset=0;vm.history(metric.ifEmpty{null},from,to,offset)}){Text("查询")};TextButton(enabled=offset>0,onClick={offset=(offset-50).coerceAtLeast(0);vm.history(metric.ifEmpty{null},from,to,offset)}){Text("上一页")};TextButton(enabled=state.facts.size==50,onClick={offset+=50;vm.history(metric.ifEmpty{null},from,to,offset)}){Text("下一页")}}}
 }
 @Composable fun Analytics(vm:AtlasModel,state:AtlasState) {
     var metricId by remember{mutableStateOf("")};val metrics=state.objects.filter{it.s("type")=="METRIC"}
     var cash by remember{mutableStateOf<List<JSONObject>>(emptyList())}
     LaunchedEffect(state.revision){cash=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
         val ym=YearMonth.now();val groups=metrics.filter{JSONObject(it.s("config")).s("role") in setOf("income","expense")}.groupBy{Units.currency(JSONObject(it.s("config")).s("unit"))}
-        groups.map{(currency,group)->var income=BigDecimal.ZERO;var expense=BigDecimal.ZERO;group.forEach{m->val c=JSONObject(m.s("config"));val v=vm.store.aggregate(m.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString(),"SUM").s("value").toBigDecimalOrNull() ?: BigDecimal.ZERO;val amount=if(currency=="CNY") Units.convert(v,c.s("unit"),"CNY") else v;if(c.s("role")=="income")income+=amount else expense-=amount};obj("unit" to currency,"income" to income.toPlainString(),"expense" to expense.toPlainString(),"net" to (income-expense).toPlainString())}
+        groups.map{(currency,group)->var income=BigDecimal.ZERO;var expense=BigDecimal.ZERO;var missing=0L;group.forEach{m->val c=JSONObject(m.s("config"));val stats=vm.store.aggregate(m.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString(),"SUM");missing+=stats.optLong("missingCount");val v=stats.s("value").toBigDecimalOrNull() ?: BigDecimal.ZERO;val amount=if(currency=="CNY") Units.convert(v,c.s("unit"),"CNY") else v;if(c.s("role")=="income")income+=amount else expense-=amount};obj("unit" to currency,"income" to income.toPlainString(),"expense" to expense.toPlainString(),"net" to if(missing>0)null else (income-expense).toPlainString(),"missingCount" to missing)}
     }}
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        cash.forEach{c->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("本月已记录现金流 · ${c.s("unit")}",style=MaterialTheme.typography.titleMedium);Text("收入 ${c.s("income")}　支出净额 ${c.s("expense")}");Text("净额 ${c.s("net")}",style=MaterialTheme.typography.headlineSmall)}}}
+        cash.forEach{c->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("本月已记录现金流 · ${c.s("unit")}",style=MaterialTheme.typography.titleMedium);Text("收入 ${c.s("income")}　支出净额 ${c.s("expense")}");Text("净额 ${c.s("net","待补充")}",style=MaterialTheme.typography.headlineSmall)}}}
         Pick("选择指标",metrics.map{it.s("id") to it.s("title")},metricId){metricId=it}
         metrics.firstOrNull{it.s("id")==metricId}?.let{m->MetricPanel(m,vm,state.revision,onRecord={vm.work("录入提示"){obj("message" to "请在空间中打开指标并点击新增记录")}})}
         if(metrics.isEmpty())Text("暂无指标")

@@ -26,7 +26,7 @@ import java.time.LocalDate
             Pick("数据语义",kinds.map{it to kindName(it)},kind){kind=it;if(it=="ALLOCATION" && !Units.isTime(unit))unit="分钟";aggregate=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
             OutlinedTextField(unit,{unit=it},label={Text("单位，如 kg、页、分钟")},modifier=Modifier.fillMaxWidth())
             Pick("统计方式",aggregateMethods.map{it to methodName(it)},aggregate){aggregate=it}
-            Pick("专业规则",listOf("" to "通用指标","income" to "收入（正值）","expense" to "支出（负值）","balance" to "账户余额快照","sleep" to "睡眠时长"),role){role=it}
+            Pick("专业规则",listOf("" to "通用指标","income" to "收入（正值）","expense" to "支出（负值）","balance" to "账户余额快照","accountChange" to "账户流水","sleep" to "睡眠时长"),role){role=it;when(it){"balance"->{kind="SNAPSHOT";aggregate="LAST_SNAPSHOT";unit="CNY"};"income","expense","accountChange"->{kind="CHANGE";aggregate="SUM";unit="CNY"};"sleep"->{kind="ALLOCATION";aggregate="SUM";unit="小时"}}}
             fields.forEach{Text("${it.s("title")} · ${it.s("type")}")};TextButton(onClick={addField=true}){Text("添加自定义字段")}
         }
     }},confirmButton={TextButton(enabled=name.isNotBlank(),onClick={val c=if(type=="METRIC") obj("kind" to kind,"unit" to unit,"aggregate" to aggregate,"role" to role,"fields" to JSONArray(fields)) else JSONObject();onSave(type,name,c)}){Text("创建")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
@@ -62,17 +62,15 @@ import java.time.LocalDate
     AlertDialog(onDismissRequest=onDismiss,title={Text("记录${metric.s("title")}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
         if(!config.has("expression"))OutlinedTextField(value,{value=it},label={Text("数值 · ${config.s("unit")}")},modifier=Modifier.fillMaxWidth())
         OutlinedTextField(date,{date=it},label={Text("发生日期 YYYY-MM-DD")},modifier=Modifier.fillMaxWidth())
-        fields.objects().forEach{f->val id=f.s("id");val v=fieldValues[id] ?: "";val label=f.s("title",id)+if(f.optBoolean("required")) " *" else ""
-            when(f.s("type")){"choice"->Pick(label,(f.optJSONArray("options") ?: JSONArray()).let{a->(0 until a.length()).map{a.getString(it) to a.getString(it)}},v){fieldValues=fieldValues+(id to it)}
-                "boolean"->Row{Checkbox(v=="true",{fieldValues=fieldValues+(id to it.toString())});Text(label,Modifier.padding(top=12.dp))}
-                else->OutlinedTextField(v,{fieldValues=fieldValues+(id to it)},label={Text(label)},modifier=Modifier.fillMaxWidth())}
-        }
+        fields.objects().forEach{f->val id=f.s("id");DynamicField(f,fieldValues[id] ?: ""){fieldValues=fieldValues+(id to it)}}
         if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
-    }},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);fields.objects().forEach{require(!it.optBoolean("required") || !fieldValues[it.s("id")].isNullOrBlank()){ "请填写${it.s("title")}" }};onSave(obj("metricId" to metric.s("id"),"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fieldValues)))}.onFailure{error=it.message ?: "输入有误"}}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+    }},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);fields.objects().forEach{require(!it.optBoolean("required") || !fieldValues[it.s("id")].isNullOrBlank()){ "请填写${it.s("title")}" }};onSave(obj("metricId" to metric.s("id"),"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fieldValues)))}.onFailure{error=it.message ?: "输入有误"}}){Text("保存")}},dismissButton={Column{TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);onSave(obj("metricId" to metric.s("id"),"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fieldValues),"allowIncomplete" to true))}.onFailure{error=it.message ?: "输入有误"}}){Text("保存不完整")};TextButton(onClick=onDismiss){Text("取消")}}})
 }
-@Composable fun EditFactDialog(f:JSONObject,onDismiss:()->Unit,onSave:(JSONObject)->Unit,onDelete:()->Unit) {
+@Composable fun EditFactDialog(f:JSONObject,metric:JSONObject?=null,onDismiss:()->Unit,onSave:(JSONObject)->Unit,onDelete:()->Unit) {
     var value by remember{mutableStateOf(f.s("value"))};var date by remember{mutableStateOf(f.s("local_date"))};var error by remember{mutableStateOf("")};var confirmDelete by remember{mutableStateOf(false)}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("修改${f.s("metric_title")}")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){OutlinedTextField(value,{value=it},label={Text("数值")},modifier=Modifier.fillMaxWidth());OutlinedTextField(date,{date=it},label={Text("发生日期")},modifier=Modifier.fillMaxWidth());Text(error);TextButton(onClick={confirmDelete=true}){Text("删除此记录")}}},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);onSave(obj("id" to f.s("id"),"value" to value.ifBlank{null},"date" to date))}.onFailure{error="请检查日期与数值"}}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("关闭")}})
+    val config=metric?.let{JSONObject(it.s("config"))} ?: JSONObject()
+    var fields by remember{mutableStateOf(JSONObject(f.s("fields_json")).let{j->j.keys().asSequence().associateWith{j.s(it)}})}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("修改${f.s("metric_title")}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){OutlinedTextField(value,{value=it},label={Text("数值")},modifier=Modifier.fillMaxWidth());OutlinedTextField(date,{date=it},label={Text("发生日期")},modifier=Modifier.fillMaxWidth());(config.optJSONArray("fields") ?: JSONArray()).objects().forEach{field->val id=field.s("id");val v=fields[id] ?: "";if(field.s("type")=="choice" || field.s("type")=="boolean"){val choices=if(field.s("type")=="boolean")listOf("true" to "是","false" to "否")else (field.optJSONArray("options") ?: JSONArray()).let{a->(0 until a.length()).map{a.getString(it) to a.getString(it)}};Pick(field.s("title"),choices,v){fields=fields+(id to it)}}else OutlinedTextField(v,{fields=fields+(id to it)},label={Text(field.s("title"))},modifier=Modifier.fillMaxWidth())};Text("录入 ${formatInstant(f.s("created_at"))}",style=MaterialTheme.typography.bodySmall);Text("修改 ${formatInstant(f.s("updated_at"))}",style=MaterialTheme.typography.bodySmall);Text(error);TextButton(onClick={confirmDelete=true}){Text("删除此记录")}}},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);onSave(obj("id" to f.s("id"),"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fields)))}.onFailure{error="请检查日期与数值"}}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("关闭")}})
     if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("删除这条记录？")},text={Text("可从操作历史撤销。")},confirmButton={TextButton(onClick=onDelete){Text("删除")}},dismissButton={TextButton(onClick={confirmDelete=false}){Text("取消")}})
 }
 fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_MEAN" to "加权平均","LAST_SNAPSHOT" to "最新快照","UNION_DURATION" to "时段并集","MEDIAN" to "中位数","MIN" to "最小值","MAX" to "最大值","COUNT" to "样本数")[s] ?: s
@@ -84,9 +82,9 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
     }},confirmButton={TextButton(enabled=value.isNotBlank() && date.isNotBlank(),onClick={onImport(metric.ifEmpty{null},value,date)}){Text("导入")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
 }
 
-@Composable fun TextEventDialog(onDismiss:()->Unit,onSave:(String)->Unit) {
-    var text by remember{mutableStateOf("")}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("记录事件")},text={OutlinedTextField(text,{text=it},label={Text("内容")},modifier=Modifier.fillMaxWidth(),minLines=3)},confirmButton={TextButton(enabled=text.isNotBlank(),onClick={onSave(text)}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+@Composable fun TextEventDialog(onDismiss:()->Unit,onSave:(String,String?)->Unit) {
+    var text by remember{mutableStateOf("")};var date by remember{mutableStateOf("")}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("记录事件")},text={Column{OutlinedTextField(text,{text=it},label={Text("内容")},modifier=Modifier.fillMaxWidth(),minLines=3);OutlinedTextField(date,{date=it},label={Text("发生日期（可选）")},modifier=Modifier.fillMaxWidth())}},confirmButton={TextButton(enabled=text.isNotBlank(),onClick={onSave(text,date.ifBlank{null})}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
 }
 
 @Composable fun FinanceDialog(objects:List<JSONObject>,balance:Boolean,onDismiss:()->Unit,onExecute:(String,JSONObject)->Unit) {
@@ -101,4 +99,13 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
     AlertDialog(onDismissRequest=onDismiss,title={Text("相关性分析")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
         Pick("指标一",metrics.map{it.s("id") to it.s("title")},x){x=it};Pick("指标二",metrics.map{it.s("id") to it.s("title")},y){y=it};OutlinedTextField(from,{from=it},label={Text("开始日期")},modifier=Modifier.fillMaxWidth());OutlinedTextField(to,{to=it},label={Text("结束日期")},modifier=Modifier.fillMaxWidth())
     }},confirmButton={TextButton(enabled=x.isNotEmpty() && y.isNotEmpty(),onClick={onExecute(obj("xMetricId" to x,"yMetricId" to y,"from" to from,"to" to to))}){Text("分析")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+}
+
+@Composable fun DynamicField(field:JSONObject,value:String,onChange:(String)->Unit) {
+    val label=field.s("title",field.s("id"))+if(field.optBoolean("required")) " *" else ""
+    when(field.s("type")) {
+        "choice"->Pick(label,(field.optJSONArray("options") ?: JSONArray()).let{a->(0 until a.length()).map{a.getString(it) to a.getString(it)}},value,onChange)
+        "boolean"->Pick(label,listOf("true" to "是","false" to "否"),value,onChange)
+        else->Column(verticalArrangement=Arrangement.spacedBy(4.dp)){Text(label,style=MaterialTheme.typography.bodyMedium);OutlinedTextField(value,onChange,modifier=Modifier.fillMaxWidth())}
+    }
 }
