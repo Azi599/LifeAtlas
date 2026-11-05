@@ -30,7 +30,9 @@ jobs:
         if: success()
         with:
           name: lifeatlas-development-build
-          path: app/build/outputs/apk/standalone/debug/*.apk
+          path: |
+            app/build/outputs/apk/standalone/debug/*.apk
+            app/build/outputs/bundle/playRelease/*.aab
           if-no-files-found: error
 
   android-tests:
@@ -58,6 +60,7 @@ jobs:
           disk-size: 4096M
           disable-animations: true
           script: |
+            adb shell settings put secure show_ime_with_hard_keyboard 1
             ./gradlew :app:connectedStandaloneDebugAndroidTest --stacktrace
             bash scripts/screenshots.sh
       - uses: actions/upload-artifact@v4

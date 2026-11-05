@@ -57,23 +57,63 @@ import java.time.LocalDate
     if(field)FieldDialog(onDismiss={field=false},onSave={f->val c=JSONObject(o.s("config"));val fields=c.optJSONArray("fields") ?: JSONArray();fields.put(f);c.put("fields",fields);vm.action("atlas.updateObject",obj("id" to o.s("id"),"config" to c),"增加字段");field=false;onDismiss()})
 }
 @Composable fun RecordDialog(metric:JSONObject,events:List<JSONObject> = emptyList(),onDismiss:()->Unit,onSave:(JSONObject)->Unit) {
-    var value by remember{mutableStateOf("")};var date by remember{mutableStateOf(LocalDate.now().toString())};var fieldValues by remember{mutableStateOf<Map<String,String>>(emptyMap())};var error by remember{mutableStateOf("")}
-    var eventId by remember{mutableStateOf("")}
-    val config=remember(metric){JSONObject(metric.s("config"))};val fields=config.optJSONArray("fields") ?: JSONArray()
-    AlertDialog(onDismissRequest=onDismiss,title={Text("记录${metric.s("title")}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
-        if(!config.has("expression"))OutlinedTextField(value,{value=it},label={Text("数值 · ${config.s("unit")}")},modifier=Modifier.fillMaxWidth())
-        OutlinedTextField(date,{date=it},label={Text("发生日期 YYYY-MM-DD")},modifier=Modifier.fillMaxWidth())
+    var value by remember{mutableStateOf("")};var date by remember{mutableStateOf(LocalDate.now().toString())};var values by remember{mutableStateOf<Map<String,String>>(emptyMap())};var error by remember{mutableStateOf("")};var eventId by remember{mutableStateOf("")}
+    var timeMode by remember{mutableStateOf("date")};var start by remember{mutableStateOf("")};var end by remember{mutableStateOf("")};var zone by remember{mutableStateOf(java.time.ZoneId.systemDefault().id)}
+    val context=androidx.compose.ui.platform.LocalContext.current;val config=remember(metric){JSONObject(metric.s("config"))};val fields=config.optJSONArray("fields") ?: JSONArray()
+    fun save(incomplete:Boolean){runCatching{
+        LocalDate.parse(date);java.time.ZoneId.of(zone);if(value.isNotBlank())decimal(value);val f=JSONObject(values);validateFields(config,f,incomplete)
+        val args=obj("metricId" to metric.s("id"),"eventId" to eventId.ifBlank{null},"value" to value.ifBlank{null},"date" to date,"zone" to zone,"fields" to f,"allowIncomplete" to incomplete)
+        if(timeMode=="instant"){require(start.isNotBlank()){"请选择发生时刻"};args.put("occurredAt",start)}
+        if(timeMode=="interval"){require(start.isNotBlank() && end.isNotBlank()){"请选择起止时刻"};require(java.time.Instant.parse(end)>=java.time.Instant.parse(start)){"结束早于开始"};args.put("startAt",start).put("endAt",end);if(value.isNotBlank())require(decimal(value).compareTo(Units.convert(secondsBetween(java.time.Instant.parse(start),java.time.Instant.parse(end)),"s",config.s("unit")))==0){"时长与起止时刻不一致"}}
+        onSave(args)
+    }.onFailure{error=it.message ?: "输入有误"}}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("记录"+metric.s("title"))},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        if(!config.has("expression"))OutlinedTextField(value,{value=it},label={Text("数值 · "+config.s("unit"))},modifier=Modifier.fillMaxWidth())
+        DateInput("发生日期",date){date=it}
+        Pick("时间",if(config.s("kind")=="ALLOCATION")listOf("date" to "仅时长","interval" to "起止时段")else listOf("date" to "仅日期","instant" to "具体时刻"),timeMode){timeMode=it}
+        if(timeMode!="date"){
+            OutlinedTextField(zone,{zone=it},label={Text("时区")},modifier=Modifier.fillMaxWidth())
+            OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={runCatching{chooseInstant(context,date,zone){start=it;date=java.time.Instant.parse(it).atZone(java.time.ZoneId.of(zone)).toLocalDate().toString()}}.onFailure{error=it.message.orEmpty()}}){Text(if(start.isBlank())if(timeMode=="interval")"选择开始时刻"else "选择发生时刻"else formatInstant(start,zone))}
+            if(timeMode=="interval")OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={runCatching{chooseInstant(context,date,zone){end=it}}.onFailure{error=it.message.orEmpty()}}){Text(if(end.isBlank())"选择结束时刻"else formatInstant(end,zone))}
+        }
         if(events.isNotEmpty())Pick("关联事件",listOf("" to "新事件")+events.map{it.s("id") to it.s("raw_input").ifBlank{it.s("local_date","未指定日期")+" · "+it.s("id").take(8)}},eventId){eventId=it}
-        fields.objects().forEach{f->val id=f.s("id");DynamicField(f,fieldValues[id] ?: ""){fieldValues=fieldValues+(id to it)}}
+        fields.objects().forEach{f->val id=f.s("id");DynamicField(f,values[id].orEmpty()){values=values+(id to it)}}
         if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
-    }},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);fields.objects().forEach{require(!it.optBoolean("required") || !fieldValues[it.s("id")].isNullOrBlank()){ "请填写${it.s("title")}" }};onSave(obj("metricId" to metric.s("id"),"eventId" to eventId.ifBlank{null},"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fieldValues)))}.onFailure{error=it.message ?: "输入有误"}}){Text("保存")}},dismissButton={Column{TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);onSave(obj("metricId" to metric.s("id"),"eventId" to eventId.ifBlank{null},"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fieldValues),"allowIncomplete" to true))}.onFailure{error=it.message ?: "输入有误"}}){Text("保存不完整")};TextButton(onClick=onDismiss){Text("取消")}}})
+    }},confirmButton={TextButton(onClick={save(false)}){Text("保存")}},dismissButton={Column{TextButton(onClick={save(true)}){Text("保存不完整")};TextButton(onClick=onDismiss){Text("取消")}}})
 }
 @Composable fun EditFactDialog(f:JSONObject,metric:JSONObject?=null,onDismiss:()->Unit,onSave:(JSONObject)->Unit,onDelete:()->Unit) {
-    var value by remember{mutableStateOf(f.s("value"))};var date by remember{mutableStateOf(f.s("local_date"))};var error by remember{mutableStateOf("")};var confirmDelete by remember{mutableStateOf(false)}
-    val config=metric?.let{JSONObject(it.s("config"))} ?: JSONObject()
-    var fields by remember{mutableStateOf(JSONObject(f.s("fields_json")).let{j->j.keys().asSequence().associateWith{j.s(it)}})}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("修改${f.s("metric_title")}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){OutlinedTextField(value,{value=it},label={Text("数值")},modifier=Modifier.fillMaxWidth());OutlinedTextField(date,{date=it},label={Text("发生日期")},modifier=Modifier.fillMaxWidth());(config.optJSONArray("fields") ?: JSONArray()).objects().forEach{field->val id=field.s("id");val v=fields[id] ?: "";if(field.s("type")=="choice" || field.s("type")=="boolean"){val choices=if(field.s("type")=="boolean")listOf("true" to "是","false" to "否")else (field.optJSONArray("options") ?: JSONArray()).let{a->(0 until a.length()).map{a.getString(it) to a.getString(it)}};Pick(field.s("title"),choices,v){fields=fields+(id to it)}}else OutlinedTextField(v,{fields=fields+(id to it)},label={Text(field.s("title"))},modifier=Modifier.fillMaxWidth())};Text("录入 ${formatInstant(f.s("created_at"))}",style=MaterialTheme.typography.bodySmall);Text("修改 ${formatInstant(f.s("updated_at"))}",style=MaterialTheme.typography.bodySmall);Text(error);TextButton(onClick={confirmDelete=true}){Text("删除此记录")}}},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);onSave(obj("id" to f.s("id"),"value" to value.ifBlank{null},"date" to date,"fields" to JSONObject(fields)))}.onFailure{error="请检查日期与数值"}}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("关闭")}})
-    if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("删除这条记录？")},text={Text("可从操作历史撤销。")},confirmButton={TextButton(onClick=onDelete){Text("删除")}},dismissButton={TextButton(onClick={confirmDelete=false}){Text("取消")}})
+    var value by remember{mutableStateOf(f.s("value"))};var date by remember{mutableStateOf(f.s("local_date"))};var error by remember{mutableStateOf("")};var confirmDelete by remember{mutableStateOf(false)};var clearTime by remember{mutableStateOf(false)};var occurred by remember{mutableStateOf(f.s("occurred_at"))}
+    var start by remember{mutableStateOf(f.s("start_at"))};var end by remember{mutableStateOf(f.s("end_at"))}
+    val context=androidx.compose.ui.platform.LocalContext.current;val config=metric?.let{JSONObject(it.s("config"))} ?: JSONObject();var fields by remember{mutableStateOf(JSONObject(f.s("fields_json")))}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("修改"+f.s("metric_title"))},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        if(!config.has("expression"))OutlinedTextField(value,{value=it},label={Text("数值")},modifier=Modifier.fillMaxWidth());DateInput("发生日期",date){date=it}
+        if(f.s("occurred_at").isNotEmpty()){
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(clearTime,{clearTime=it});Text("仅保留日期")}
+            if(!clearTime)OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={chooseInstant(context,date,f.s("zone")){occurred=it;date=java.time.Instant.parse(it).atZone(java.time.ZoneId.of(f.s("zone"))).toLocalDate().toString()}}){Text(formatInstant(occurred,f.s("zone")))}
+        }
+        if(f.s("start_at").isNotEmpty()){
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Checkbox(clearTime,{clearTime=it});Text("仅保留时长")}
+            if(!clearTime){OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={chooseInstant(context,date,f.s("zone")){start=it;date=java.time.Instant.parse(it).atZone(java.time.ZoneId.of(f.s("zone"))).toLocalDate().toString()}}){Text(formatInstant(start,f.s("zone")))};OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={chooseInstant(context,date,f.s("zone")){end=it}}){Text(formatInstant(end,f.s("zone")))}}
+        }
+        (config.optJSONArray("fields") ?: JSONArray()).objects().forEach{field->val id=field.s("id");DynamicField(field,fields.s(id)){fields=fields.copyJson().put(id,it)}}
+        Text("录入 "+formatInstant(f.s("created_at")),style=MaterialTheme.typography.bodySmall);Text("修改 "+formatInstant(f.s("updated_at")),style=MaterialTheme.typography.bodySmall)
+        if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error);TextButton(onClick={confirmDelete=true}){Text("删除此记录")}
+    }},confirmButton={TextButton(onClick={runCatching{LocalDate.parse(date);if(value.isNotBlank())decimal(value);validateFields(config,fields);val args=obj("id" to f.s("id"),"value" to value.ifBlank{null},"date" to date,"fields" to fields,"clearTime" to clearTime);if(!clearTime && occurred!=f.s("occurred_at"))args.put("occurredAt",occurred);if(!clearTime && (start!=f.s("start_at") || end!=f.s("end_at"))){require(java.time.Instant.parse(end)>=java.time.Instant.parse(start));args.put("startAt",start).put("endAt",end).remove("value")};onSave(args)}.onFailure{error=it.message ?: "输入有误"}}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("关闭")}})
+    if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("删除这条记录？")},confirmButton={TextButton(onClick=onDelete){Text("删除")}},dismissButton={TextButton(onClick={confirmDelete=false}){Text("取消")}})
+}
+@Composable fun DateInput(label:String,date:String,onChange:(String)->Unit) {
+    val context=androidx.compose.ui.platform.LocalContext.current
+    OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={val d=runCatching{LocalDate.parse(date)}.getOrDefault(LocalDate.now());android.app.DatePickerDialog(context,{_,y,m,day->onChange(LocalDate.of(y,m+1,day).toString())},d.year,d.monthValue-1,d.dayOfMonth).show()}){Text(label+"："+date)}
+}
+fun chooseInstant(context:android.content.Context,date:String,zone:String,onSave:(String)->Unit) {
+    val d=LocalDate.parse(date);val z=java.time.ZoneId.of(zone)
+    android.app.DatePickerDialog(context,{_,year,month,day->
+        android.app.TimePickerDialog(context,{_,hour,minute->val local=java.time.LocalDateTime.of(year,month+1,day,hour,minute);val offsets=z.rules.getValidOffsets(local)
+            if(offsets.isEmpty())android.widget.Toast.makeText(context,"这个当地时刻不存在，请重新选择",android.widget.Toast.LENGTH_LONG).show()
+            else if(offsets.size==1)onSave(java.time.ZonedDateTime.ofStrict(local,offsets[0],z).toInstant().toString())
+            else android.app.AlertDialog.Builder(context).setTitle("选择时区偏移").setItems(offsets.map{it.toString()}.toTypedArray()){_,which->onSave(java.time.ZonedDateTime.ofStrict(local,offsets[which],z).toInstant().toString())}.show()
+        },12,0,true).show()
+    },d.year,d.monthValue-1,d.dayOfMonth).show()
 }
 fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_MEAN" to "加权平均","LAST_SNAPSHOT" to "最新快照","UNION_DURATION" to "时段并集","MEDIAN" to "中位数","MIN" to "最小值","MAX" to "最大值","COUNT" to "样本数")[s] ?: s
 

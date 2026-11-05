@@ -33,17 +33,24 @@ class UiTest {
     @Test fun themeEditorPreviewAndRestartRender() {
         var vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
         runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()};rule.waitForIdle();capture("default-home.png")
+        rule.onNodeWithText("记录").performClick();capture("records.png")
+        rule.onNodeWithText("显示：记录").performClick();rule.onNodeWithText("时间轴").performClick();capture("timeline.png")
+        rule.onNodeWithText("分析").performClick();rule.onNodeWithText("选择指标：请选择").performScrollTo().performClick();rule.onNodeWithText("浇水量").performClick();capture("analysis.png")
+        rule.onNodeWithText("首页").performClick();rule.onNodeWithText("输入").performTextInput("创建新的生活项目");capture("keyboard.png")
+        rule.activity.runOnUiThread{(rule.activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(rule.activity.currentFocus?.windowToken,0)}
+        Thread.sleep(500)
         rule.onNodeWithText("我的").performClick();rule.onNodeWithText("外观").performScrollTo().performClick();rule.onNodeWithText("已保存主题：薰衣草").assertExists();capture("theme-editor.png")
         rule.onNodeWithText("主色").performScrollTo().performClick();rule.onNodeWithText("调色盘").assertExists();capture("color-picker.png");rule.onNodeWithText("取消").performClick()
-        rule.onNodeWithText("应用图标").performScrollTo();capture("icon-masks.png")
+        rule.onNodeWithText("单色主题图标").performScrollTo();capture("icon-masks.png")
         val config=ThemeDefaults.config();config.getJSONObject("light").put("gradient",true).put("angle",30).put("stops",JSONArray().put(obj("color" to "#D8BFF2","position" to 0)).put(obj("color" to "#FAC9DE","position" to 0.5)).put(obj("color" to "#E8DDF9","position" to 1)))
         runBlocking{vm.action("atlas.saveTheme",obj("id" to "ui-gradient","title" to "粉紫渐变","config" to config),"保存主题").join()}
-        rule.activityRule.scenario.recreate();vm=ViewModelProvider(rule.activity)[AtlasModel::class.java];runBlocking{vm.refresh().join()};rule.waitForIdle();org.junit.Assert.assertEquals("ui-gradient",vm.ui.value.themeId);capture("custom-gradient-home.png")
+        rule.activityRule.scenario.recreate();vm=ViewModelProvider(rule.activity)[AtlasModel::class.java];runBlocking{vm.refresh().join()};rule.waitForIdle();org.junit.Assert.assertEquals("ui-gradient",vm.ui.value.themeId);rule.onNodeWithText("首页").performClick();capture("custom-gradient-home.png")
         val manifest=obj("id" to "ui.preview"+System.currentTimeMillis(),"title" to "观鸟记录","version" to 1,"metrics" to JSONArray().put(obj("key" to "bird","title" to "观察数量","kind" to "CHANGE","unit" to "只","aggregate" to "SUM","fields" to JSONArray().put(obj("id" to "species","title" to "鸟类名称","type" to "text")))))
         runBlocking{vm.action("atlas.installPlugin",obj("manifest" to manifest),"预览观鸟记录").join()};rule.waitForIdle();rule.onNodeWithText("表单预览：观察数量").performScrollTo();capture("plugin-generation-preview.png")
         vm.clearPending();runBlocking{vm.action("atlas.setAppearance",obj("mode" to "dark"),"深色").join()};rule.waitForIdle();capture("dark-home.png")
         runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()}
     }
+    @org.junit.After fun restoreDefault(){runCatching{val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java];runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()}}}
     private fun capture(name:String) {
         rule.waitForIdle()
         val instrumentation=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()

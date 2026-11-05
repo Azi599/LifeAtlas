@@ -12,6 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -21,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -30,6 +32,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.*
+import kotlinx.coroutines.launch
 
 class MainActivity:ComponentActivity() {
     private lateinit var vm:AtlasModel
@@ -48,11 +51,15 @@ class MainActivity:ComponentActivity() {
         setContent {
             val appState by vm.ui.collectAsState()
             val dark=when(appState.theme){"dark"->true;"light"->false;else->androidx.compose.foundation.isSystemInDarkTheme()}
-            SideEffect {
-                val flags=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-                window.insetsController?.setSystemBarsAppearance(if(dark)0 else flags,flags)
-            }
             AtlasTheme(JSONObject(appState.themeConfig),dark,appState.compact) {
+                val foreground=MaterialTheme.colorScheme.onBackground
+                val navigationForeground=MaterialTheme.colorScheme.onSurface
+                SideEffect {
+                    val status=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    val navigation=android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                    val flags=(if(foreground.luminance()<.5f)status else 0) or (if(navigationForeground.luminance()<.5f)navigation else 0)
+                    window.insetsController?.setSystemBarsAppearance(flags,status or navigation)
+                }
                 App(vm,
                     onExport={isCsv->errorExport=false;csv=isCsv;export.launch(if(isCsv) "LifeAtlas-records.csv" else "LifeAtlas-backup.jsonl")},
                     onCsv={csvPicker.launch(arrayOf("text/*","application/csv","*/*"))},
@@ -75,6 +82,10 @@ class MainActivity:ComponentActivity() {
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit,onVoice:()->Unit) {
     val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
+    val listState=rememberLazyListState()
+    LaunchedEffect(page,selected){listState.scrollToItem(0)}
+    val scope=rememberCoroutineScope()
+    fun editById(id:String){scope.launch {val row=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.query("SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE f.id=?",arrayOf(id)).firstOrNull()?.also{f->if(f.s("value").isNotEmpty())f.put("value",normalizedValue(decimal(f.s("value")),JSONObject(f.s("fields_json")),vm.store.config(f.s("metric_id"))).toPlainString())}};editingFact=row}}
     var timeline by rememberSaveable{mutableStateOf(false)}
     var objectCache by remember{mutableStateOf<Map<String,JSONObject>>(emptyMap())}
     var spaceRows by remember{mutableStateOf<List<JSONObject>>(emptyList())};var spaceSearch by rememberSaveable{mutableStateOf("")};var spaceOffset by rememberSaveable{mutableIntStateOf(0)};var archived by rememberSaveable{mutableStateOf(false)}
@@ -105,16 +116,16 @@ class MainActivity:ComponentActivity() {
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {Button(enabled=!state.busy && command.isNotBlank(),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "执行")};TextButton(onClick=onVoice){Text("语音")};TextButton(onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}}
                 if(state.image!=null) TextButton(onClick=vm::clearImage){Text("移除图片")}
             }}
-            if(!keyboard)NavigationBar {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}
+            if(!keyboard)NavigationBar(containerColor=MaterialTheme.colorScheme.surface) {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}
         }}
     ) {padding->
-        LazyColumn(Modifier.fillMaxSize().padding(padding),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
             when(page) {
                 "workspace" -> {
                     item {Row {TextButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")};TextButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")};TextButton(onClick={create=true}){Text("手动创建")}}}
                     state.pending?.let {pending->item {PlanPreview(pending,onConfirm={vm.execute(it,true)},onCancel=vm::clearPending)}}
-                    state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)})}}
+                    state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                     item {Text("我的空间",style=MaterialTheme.typography.titleLarge)}
                     val layouts=state.layouts.associateBy{it.s("object_id")}
                     val cards=objects.filter{it.s("type") in setOf("PROJECT","DASHBOARD","VIEW") && layouts[it.s("id")]?.optInt("hidden")!=1}.sortedBy{layouts[it.s("id")]?.optInt("position") ?: 999}.take(8)
@@ -155,7 +166,7 @@ class MainActivity:ComponentActivity() {
                     item{Text("分析",style=MaterialTheme.typography.headlineSmall)}
                     item{Column {OutlinedButton(onClick={financeDialog="transfer"}){Text("转账")};OutlinedButton(onClick={financeDialog="balance"}){Text("余额")};OutlinedButton(onClick={correlationDialog=true}){Text("相关性分析")}}}
                     item{Analytics(vm,state)}
-                    state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)})}}
+                    state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                 }
                 "settings" -> {
                     item{Text("我的",style=MaterialTheme.typography.headlineSmall)}
@@ -227,6 +238,6 @@ fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变
 fun actionName(id:String)=mapOf("atlas.createObject" to "创建对象","atlas.updateObject" to "修改对象","atlas.record" to "记录数据","atlas.editRecord" to "修改记录","atlas.deleteRecord" to "删除记录","atlas.query" to "查询记录","atlas.aggregate" to "统计数据","atlas.report" to "生成报告","atlas.createView" to "创建页面","atlas.layout" to "调整首页","atlas.rollbackPlugin" to "回退插件","atlas.requestBuild" to "建立扩展任务","finance.transfer" to "转账","time.start" to "开始计时","time.stop" to "结束计时")[id] ?: "执行操作"
 fun pluginState(state:String)=mapOf("ACTIVE" to "已启用","DISABLED" to "已停用","SUPERSEDED" to "历史版本")[state] ?: state
 
-fun buildState(s:String)=mapOf("AWAITING_SERVICE" to "待配置构建","SUBMITTED" to "已提交","QUEUED" to "排队中","GENERATING" to "生成源码中","COMMITTING" to "提交源码中","BUILDING" to "编译与测试中","WAITING_APPROVAL" to "等待发行确认","READY_FOR_REVIEW" to "更新包已就绪","FAILED" to "构建失败","INTERRUPTED" to "任务已中断")[s] ?: s
+fun buildState(s:String)=mapOf("AWAITING_SERVICE" to "待提交构建","SUBMITTED" to "已提交","QUEUED" to "排队中","GENERATING" to "生成源码中","COMMITTING" to "提交源码中","BUILDING" to "编译与测试中","WAITING_APPROVAL" to "等待发行确认","READY_FOR_REVIEW" to "更新包已就绪","FAILED" to "构建失败","INTERRUPTED" to "任务已中断")[s] ?: s
 
 fun formatInstant(value:String,zone:String=java.time.ZoneId.systemDefault().id):String=runCatching{java.time.Instant.parse(value).atZone(java.time.ZoneId.of(zone)).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"))}.getOrDefault(value)

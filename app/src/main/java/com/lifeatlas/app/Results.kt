@@ -8,7 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
-@Composable fun ExecutionResults(result:JSONObject,objects:List<JSONObject>,onOpen:(String)->Unit,onFact:(JSONObject)->Unit,onRetry:(JSONObject)->Unit={}) {
+@Composable fun ExecutionResults(result:JSONObject,objects:List<JSONObject>,onOpen:(String)->Unit,onFact:(JSONObject)->Unit,onRetry:(JSONObject)->Unit={},onFactId:(String)->Unit={}) {
     val steps=result.optJSONObject("steps") ?: return
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
         if(result.has("retryPlan"))OutlinedButton(onClick={onRetry(result.getJSONObject("retryPlan"))}){Text("重试剩余操作")}
@@ -16,6 +16,8 @@ import org.json.JSONObject
         steps.keys().forEach{key->val value=steps.optJSONObject(key) ?: return@forEach
             if(value.has("status"))Text(buildState(value.s("status")))
             if(value.has("update")){val release=value.getJSONObject("update");Text("可更新至 ${release.s("versionName",release.optLong("versionCode").toString())}")}
+            if(value.has("points"))Trend(value.getJSONArray("points").objects(),value.s("unit"),value.s("chart","line"))
+            if(value.has("eventId") && value.has("metricId") && value.s("id").isNotEmpty())OutlinedButton(onClick={onFactId(value.s("id"))}){Text("修改此记录")}
             if(value.has("records")) {
                 val records=value.getJSONArray("records").objects()
                 Text("查询结果 · ${records.size} 条",style=MaterialTheme.typography.titleMedium)

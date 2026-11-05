@@ -30,11 +30,16 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
     val text=readableColor(themeColor(c.s("text")),surface);val secondary=readableColor(themeColor(c.s("secondaryText")),surface)
     val primary=readableColor(seed,surface);val container=lerp(surface,seed,if(dark)0.3f else 0.22f)
     val base=if(dark)darkColorScheme()else lightColorScheme()
-    val scheme=base.copy(primary=primary,onPrimary=onColor(primary),primaryContainer=container,onPrimaryContainer=readableColor(text,container),secondary=primary,onSecondary=onColor(primary),secondaryContainer=container,onSecondaryContainer=readableColor(text,container),background=bg,onBackground=readableColor(text,bg),surface=surface,onSurface=text,surfaceVariant=lerp(surface,seed,0.07f),onSurfaceVariant=secondary,surfaceTint=Color.Transparent,outline=lerp(surface,text,0.45f),outlineVariant=lerp(surface,text,0.15f))
+    var gradient=if(c.optBoolean("gradient"))c.getJSONArray("stops").objects().map{it.getDouble("position").toFloat() to themeColor(it.s("color"))}else emptyList()
+    var backgroundText=readableColor(text,bg)
+    if(gradient.isNotEmpty()) {
+        val original=gradient
+        for(step in 0..20){val tinted=original.map{it.first to lerp(it.second,bg,step/20f)};val candidate=listOf(backgroundText,Color.Black,Color.White).firstOrNull{color->tinted.all{contrastRatio(color,it.second)>=4.5}};if(candidate!=null){gradient=tinted;backgroundText=candidate;break}}
+    }
+    val scheme=base.copy(primary=primary,onPrimary=onColor(primary),primaryContainer=container,onPrimaryContainer=readableColor(text,container),secondary=primary,onSecondary=onColor(primary),secondaryContainer=container,onSecondaryContainer=readableColor(text,container),background=bg,onBackground=backgroundText,surface=surface,onSurface=text,surfaceVariant=lerp(surface,seed,0.07f),onSurfaceVariant=secondary,surfaceTint=Color.Transparent,surfaceContainer=surface,surfaceContainerHigh=surface,surfaceContainerHighest=surface,surfaceContainerLow=surface,surfaceContainerLowest=surface,outline=lerp(surface,text,0.45f),outlineVariant=lerp(surface,text,0.15f))
     val defaults=Typography();val font=FontFamily.SansSerif
     val typography=defaults.copy(headlineSmall=TextStyle(fontFamily=font,fontSize=27.sp,lineHeight=36.sp,fontWeight=FontWeight.Medium),titleLarge=TextStyle(fontFamily=font,fontSize=22.sp,lineHeight=30.sp,fontWeight=FontWeight.Medium),titleMedium=TextStyle(fontFamily=font,fontSize=17.sp,lineHeight=25.sp,fontWeight=FontWeight.Medium),bodyLarge=TextStyle(fontFamily=font,fontSize=16.sp,lineHeight=25.sp),bodyMedium=TextStyle(fontFamily=font,fontSize=14.sp,lineHeight=22.sp),bodySmall=TextStyle(fontFamily=font,fontSize=13.sp,lineHeight=19.sp),labelLarge=TextStyle(fontFamily=font,fontSize=14.sp,lineHeight=21.sp,fontWeight=FontWeight.Medium),labelSmall=TextStyle(fontFamily=font,fontSize=12.sp,lineHeight=18.sp,fontWeight=FontWeight.Medium))
-    val stops=if(c.optBoolean("gradient"))c.getJSONArray("stops").objects().map{it.getDouble("position").toFloat() to lerp(bg,themeColor(it.s("color")),0.22f)}else emptyList()
-    CompositionLocalProvider(LocalAtlasBackground provides bg,LocalContentColor provides scheme.onBackground,LocalAtlasTokens provides AtlasTokens(gap=if(compact)8.dp else 16.dp,chartGrid=scheme.outlineVariant,gradient=stops,angle=c.optDouble("angle",135.0).toFloat())) {
+    CompositionLocalProvider(LocalAtlasBackground provides bg,LocalContentColor provides scheme.onBackground,LocalAtlasTokens provides AtlasTokens(gap=if(compact)8.dp else 16.dp,chartGrid=scheme.outlineVariant,gradient=gradient,angle=c.optDouble("angle",135.0).toFloat())) {
         MaterialTheme(colorScheme=scheme,typography=typography,shapes=Shapes(extraSmall=RoundedCornerShape(6.dp),small=RoundedCornerShape(10.dp),medium=RoundedCornerShape(14.dp),large=RoundedCornerShape(20.dp),extraLarge=RoundedCornerShape(24.dp)),content=content)
     }
 }
@@ -49,10 +54,10 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
     androidx.compose.material3.Button(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,contentPadding=contentPadding,content=content)
 }
 @Composable fun OutlinedButton(onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,contentPadding:PaddingValues=PaddingValues(horizontal=16.dp,vertical=12.dp),content:@Composable RowScope.()->Unit) {
-    androidx.compose.material3.OutlinedButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.outlinedButtonColors(contentColor=readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
+    androidx.compose.material3.OutlinedButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.outlinedButtonColors(contentColor=if(LocalAtlasBackground.current==MaterialTheme.colorScheme.background)MaterialTheme.colorScheme.onBackground else readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
 }
 @Composable fun TextButton(onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,contentPadding:PaddingValues=PaddingValues(horizontal=12.dp,vertical=10.dp),content:@Composable RowScope.()->Unit) {
-    androidx.compose.material3.TextButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.textButtonColors(contentColor=readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
+    androidx.compose.material3.TextButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.textButtonColors(contentColor=if(LocalAtlasBackground.current==MaterialTheme.colorScheme.background)MaterialTheme.colorScheme.onBackground else readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
 }
 @Composable fun NavGlyph(index:Int,selected:Boolean) {
     val color=if(selected)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant

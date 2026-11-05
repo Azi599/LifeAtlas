@@ -32,6 +32,7 @@ class Actions(val store:AtlasStore) {
         "atlas.restoreRecord" to "恢复记录 args id",
         "atlas.searchObjects" to "按名称发现对象和指标 args keyword,type?,offset?，返回至多100个真实对象",
         "atlas.query" to "查询记录 args metricId?,from?,to?,offset?,limit? 最多100条",
+        "atlas.chart" to "生成图表 args metricId,from,to,chart?(line/bar/heatmap)；返回实际日统计点",
         "atlas.aggregate" to "精确统计 args metricId,from,to,method?；SUM MEAN WEIGHTED_MEAN LAST_SNAPSHOT UNION_DURATION MEDIAN MIN MAX COUNT",
         "atlas.createView" to "创建声明式页面 args title,parentId?,components:[{component:form/history/chart/summary/text/navigation,metricId?,chart?,text?,objectId?}]",
         "atlas.report" to "创建报告页面 args title,metrics:[metricId],from,to",
@@ -138,10 +139,11 @@ class Actions(val store:AtlasStore) {
                         r.put("value",v?.toPlainString() ?: JSONObject.NULL);fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",store.one("atlas_objects",r.s("metric_id"))!!.optLong("revision",1))
                         if(c.s("role") in setOf("income","expense","balance","accountChange")){if(v==null)fields.remove("_minorUnits")else fields.put("_minorUnits",v.movePointRight(c.optInt("decimalPlaces",2)).toBigIntegerExact().toString())}
                     }
-                    if(a.has("date")){LocalDate.parse(a.getString("date"));require(a.getString("date")==r.s("local_date") || r.s("start_at").isEmpty() || a.optBoolean("clearTime")){"修改时段日期需同时修改起止时间，或选择仅保留时长"};r.put("local_date",a.getString("date"))}
+                    if(a.has("date")){LocalDate.parse(a.getString("date"));require(a.getString("date")==r.s("local_date") || r.s("start_at").isEmpty() || a.optBoolean("clearTime") || a.has("startAt")){"修改时段日期需同时修改起止时间，或选择仅保留时长"};r.put("local_date",a.getString("date"))}
                     if(a.optBoolean("clearTime")){r.put("start_at",JSONObject.NULL);r.put("end_at",JSONObject.NULL);r.put("occurred_at",JSONObject.NULL);r.put("precision","DATE")}
                     if(a.has("startAt") || a.has("endAt")){require(c.s("kind")=="ALLOCATION");val start=Instant.parse(a.s("startAt",r.s("start_at")));val end=Instant.parse(a.s("endAt",r.s("end_at")));require(end>=start);val zone=ZoneId.of(a.s("zone",r.s("zone")));require(start.atZone(zone).toLocalDate().toString()==r.s("local_date") || c.s("role")=="sleep");r.put("start_at",start.toString());r.put("end_at",end.toString());r.put("zone",zone.id);r.put("precision","INTERVAL");r.put("value",Units.convert(secondsBetween(start,end),"s",c.s("unit")).toPlainString())}
                     if(r.s("start_at").isNotEmpty() && a.has("value") && !a.has("startAt") && !a.has("endAt")){val duration=Units.convert(secondsBetween(Instant.parse(r.s("start_at")),Instant.parse(r.s("end_at"))),"s",c.s("unit"));require(r.s("value").isNotEmpty() && decimal(r.s("value")).compareTo(duration)==0){"时长与原时段不一致，请修改起止时间或选择仅保留时长"}}
+                    if(a.has("occurredAt")){r.put("occurred_at",Instant.parse(a.getString("occurredAt")).toString());r.put("precision","INSTANT")}
                     if(r.s("occurred_at").isNotEmpty())require(Instant.parse(r.s("occurred_at")).atZone(ZoneId.of(r.s("zone"))).toLocalDate().toString()==r.s("local_date")){"发生日期与原时刻不一致"}
                     r.put("fields_json",fields.toString())
                 } else r.put("deleted",if(action=="atlas.deleteRecord") 1 else 0)
@@ -149,6 +151,7 @@ class Actions(val store:AtlasStore) {
             }
             "atlas.searchObjects" -> {val keyword=a.s("keyword");require(keyword.length<=100);return obj("objects" to JSONArray(store.query("SELECT * FROM atlas_objects WHERE archived=0 AND title LIKE ? ${if(a.s("type").isNotEmpty()) "AND type=?" else ""} ORDER BY title LIMIT 100 OFFSET ?",(listOf("%$keyword%")+listOfNotNull(a.s("type").ifEmpty{null})+a.optInt("offset").coerceAtLeast(0).toString()).toTypedArray())))}
             "atlas.query" -> return obj("metricId" to a.s("metricId"),"from" to a.s("from","0001-01-01"),"to" to a.s("to","9999-12-31"),"records" to JSONArray(store.facts(a.s("metricId").ifEmpty{null},a.s("from","0001-01-01"),a.s("to","9999-12-31"),a.optInt("offset"),a.optInt("limit",50).coerceAtMost(100))))
+            "atlas.chart"->{val id=a.getString("metricId");val chart=a.s("chart","line");require(chart in setOf("line","bar","heatmap"));return obj("metricId" to id,"chart" to chart,"unit" to store.config(id).s("unit"),"points" to JSONArray(store.dailySeries(id,a.getString("from"),a.getString("to"))))}
             "atlas.aggregate" -> return store.aggregate(a.getString("metricId"),a.getString("from"),a.getString("to"),a.s("method",store.config(a.getString("metricId")).s("aggregate","SUM")))
             "atlas.createView" -> {val components=a.getJSONArray("components");validateUi(components);return dispatch("atlas.createObject",obj("type" to "VIEW","title" to a.getString("title"),"parentId" to a.s("parentId").ifEmpty{null},"config" to obj("component" to "schema","components" to components)))}
             "atlas.report" -> {val results=JSONArray();a.getJSONArray("metrics").let{for(i in 0 until it.length()) results.put(store.aggregate(it.getString(i),a.getString("from"),a.getString("to")))};return dispatch("atlas.createObject",obj("type" to "VIEW","title" to a.s("title","统计报告"),"config" to obj("component" to "report","metrics" to a.getJSONArray("metrics"),"results" to results,"from" to a.s("from"),"to" to a.s("to"))))}
@@ -185,7 +188,7 @@ class Actions(val store:AtlasStore) {
             }
             "atlas.capabilities" -> {val all=JSONObject(catalog);store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'").forEach{row->val m=JSONObject(row.s("manifest"));(m.optJSONArray("actions") ?: JSONArray()).objects().forEach{all.put("${m.s("id")}.${it.s("id")}",it)}};return obj("actions" to all)}
             "atlas.navigate" -> return obj("page" to a.s("page","spaces"),"objectId" to a.s("objectId"))
-            "atlas.requestBuild" -> {val id=uid();store.put("atlas_builds",obj("id" to id,"request" to a.toString(),"status" to "AWAITING_SERVICE","remote_id" to null,"artifact_url" to null,"detail" to "请在应用更新中配置构建服务","created_at" to now(),"updated_at" to now()));return obj("id" to id,"status" to "AWAITING_SERVICE")}
+            "atlas.requestBuild" -> {val id=uid();store.put("atlas_builds",obj("id" to id,"request" to a.toString(),"status" to "AWAITING_SERVICE","remote_id" to null,"artifact_url" to null,"detail" to "","created_at" to now(),"updated_at" to now()));return obj("id" to id,"status" to "AWAITING_SERVICE")}
             "atlas.correlation" -> {
                 fun byDay(id:String):Map<String,Double> = store.dailySeries(id,a.getString("from"),a.getString("to")).mapNotNull{p->p.s("value").toDoubleOrNull()?.takeIf{it.isFinite()}?.let{p.s("date") to it}}.toMap()
                 val x=byDay(a.getString("xMetricId"));val y=byDay(a.getString("yMetricId"));val pairs=x.keys.intersect(y.keys).map{x.getValue(it) to y.getValue(it)};return obj("pearson" to MathEngine.pearson(pairs),"samplePairs" to pairs.size,"definition" to "共同有数据日期；按各指标的日统计规则对齐；相关性不表明因果")
