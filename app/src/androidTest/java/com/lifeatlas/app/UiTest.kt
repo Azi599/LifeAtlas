@@ -9,7 +9,8 @@ import org.junit.Rule
 import org.junit.Test
 
 class UiTest {
-    @get:Rule val rule=createAndroidComposeRule<MainActivity>()
+    @get:Rule(order=0) val rule=createAndroidComposeRule<MainActivity>()
+    @get:Rule(order=1) val failures=object:org.junit.rules.TestWatcher(){override fun failed(error:Throwable,description:org.junit.runner.Description){runCatching{capture("failure-"+description.methodName+".png")}}}
     @Test fun manualProjectCreationWorksWithoutAi(){
         rule.onNodeWithText("手动创建").performClick()
         rule.onNodeWithText("名称").performTextInput("离线项目-${System.currentTimeMillis()}")
