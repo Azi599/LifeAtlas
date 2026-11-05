@@ -68,3 +68,9 @@ object Expressions {
         }
     }
 }
+
+fun normalizedValue(raw:BigDecimal,fields:JSONObject,config:JSONObject):BigDecimal {
+    val revision=fields.optInt("_unitVersion",0);var result=raw
+    (config.optJSONArray("conversions") ?: JSONArray()).objects().filter{it.optInt("version")>revision}.forEach{result*=decimal(it.getString("factor"))}
+    return result
+}

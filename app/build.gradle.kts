@@ -11,7 +11,7 @@ android {
         minSdk = 31
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = 35
-        versionCode = 2
+        versionCode = providers.gradleProperty("atlasVersionCode").orElse("2").get().toInt()
         versionName = "0.2.0-dev"
     }
     buildFeatures { compose = true }

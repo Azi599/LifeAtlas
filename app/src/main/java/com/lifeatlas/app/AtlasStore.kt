@@ -60,6 +60,10 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         j.put(obj("table" to table,"id" to id,"before" to before,"after" to row))
         if(before==null) writableDatabase.insertOrThrow(table,null,cv(row)) else writableDatabase.update(table,cv(row),"id=?",arrayOf(id))
     }
+    fun remove(table:String,id:String) {
+        require(table in tables && table!="atlas_operations");val j=journal ?: error("写入必须经过操作事务");val before=one(table,id) ?: return
+        j.put(obj("table" to table,"id" to id,"before" to before,"after" to null));writableDatabase.delete(table,"id=?",arrayOf(id))
+    }
     private fun restore(table:String,id:String,row:JSONObject?) { if(row==null) writableDatabase.delete(table,"id=?",arrayOf(id)) else {val existing=one(table,id);if(existing==null) writableDatabase.insertOrThrow(table,null,cv(row)) else writableDatabase.update(table,cv(row),"id=?",arrayOf(id))} }
     @Synchronized fun transact(title:String,requestId:String=uid(),block:()->JSONObject):JSONObject {
         one("atlas_operations",requestId)?.let {return JSONObject(it.s("result"))}
@@ -67,7 +71,7 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         try {
             val result=block();val patches=journal!!
             // Preserve redo only until the next actual mutation.
-            if(patches.length()>0) db.delete("atlas_operations","undone=1",null)
+            if(patches.length()>0) db.execSQL("UPDATE atlas_operations SET undone=2 WHERE undone=1")
             db.insertOrThrow("atlas_operations",null,cv(obj("id" to requestId,"title" to title,"patches" to patches.toString(),"result" to result.toString(),"undone" to 0,"created_at" to now())))
             db.setTransactionSuccessful();return result
         } finally {journal=null;db.endTransaction()}
@@ -79,14 +83,15 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
     }
     fun facts(metric:String?=null,from:String="0001-01-01",to:String="9999-12-31",offset:Int=0,limit:Int=50,includeDeleted:Boolean=false):List<JSONObject> {
         val sql="SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE ${if(includeDeleted) "1=1" else "f.deleted=0"} AND f.local_date>=? AND f.local_date<=? ${if(metric==null) "" else "AND f.metric_id=?"} ORDER BY f.local_date DESC,f.id DESC LIMIT ? OFFSET ?"
-        return query(sql,(listOf(from,to)+listOfNotNull(metric)+listOf(limit.coerceIn(1,500).toString(),offset.coerceAtLeast(0).toString())).toTypedArray())
+        return query(sql,(listOf(from,to)+listOfNotNull(metric)+listOf(limit.coerceIn(1,500).toString(),offset.coerceAtLeast(0).toString())).toTypedArray()).map{r->if(r.s("value").isNotEmpty()) {val raw=r.s("value");r.put("raw_value",raw);r.put("value",normalizedValue(decimal(raw),JSONObject(r.s("fields_json")),config(r.s("metric_id"))).toPlainString())};r}
     }
     fun aggregate(metric:String,from:String,to:String,method:String=config(metric).s("aggregate","SUM")):JSONObject {
         LocalDate.parse(from);LocalDate.parse(to);require(method in aggregateMethods)
+        val metricConfig=config(metric)
         var count=0L;var sum=BigDecimal.ZERO;var weighted=BigDecimal.ZERO;var weights=BigDecimal.ZERO;var last:String?=null;var min:BigDecimal?=null;var max:BigDecimal?=null
         val distribution=ArrayList<BigDecimal>();val intervals=ArrayList<Pair<Long,Long>>()
         readableDatabase.rawQuery("SELECT value,fields_json,start_at,end_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND local_date BETWEEN ? AND ? ORDER BY local_date,occurred_at,created_at,id",arrayOf(metric,from,to)).use {c->while(c.moveToNext()) {
-            if(!c.isNull(0)) {val v=decimal(c.getString(0));count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
+            if(!c.isNull(0)) {val fields=JSONObject(c.getString(1));if(metricConfig.s("role") in setOf("income","expense") && fields.s("flow")=="transfer") continue;val v=normalizedValue(decimal(c.getString(0)),fields,metricConfig);count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
                 if(method=="WEIGHTED_MEAN") {val w=JSONObject(c.getString(1)).s("weight").takeIf{it.isNotEmpty()}?.let(::decimal);if(w!=null){require(w>=BigDecimal.ZERO);weighted+=v*w;weights+=w}}
             }
             if(method=="UNION_DURATION" && !c.isNull(2) && !c.isNull(3)) intervals.add(Instant.parse(c.getString(2)).epochSecond to Instant.parse(c.getString(3)).epochSecond)

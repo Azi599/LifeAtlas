@@ -10,6 +10,9 @@ class Actions(val store:AtlasStore) {
         "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,fields:[{id,title,type,required,options?}],expression?}",
         "atlas.updateObject" to "修改或移动对象 args id,title?,parentId?,config?,archived?；指标语义不得改变",
         "atlas.relate" to "关联对象 args fromId,toId,kind",
+        "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",
+        "atlas.copyObject" to "复制对象定义 args id,title?；不复制数据事实",
+        "atlas.deleteObject" to "归档对象 args id，可撤销",
         "atlas.record" to "新增记录 args metricId,value?(十进制字符串),date(YYYY-MM-DD),occurredAt?,fields?,eventId?,startAt?,endAt?。未知数值留空",
         "atlas.editRecord" to "修改记录 args id,value?,date?,fields?",
         "atlas.deleteRecord" to "软删除记录 args id；可撤销",
@@ -70,6 +73,9 @@ class Actions(val store:AtlasStore) {
                 if(a.has("archived")) row.put("archived",if(a.getBoolean("archived")) 1 else 0)
                 row.put("revision",row.getLong("revision")+1);row.put("updated_at",now());store.put("atlas_objects",row);return obj("id" to row.s("id"))
             }
+            "atlas.createEvent" -> return obj("id" to event(a.getString("text")))
+            "atlas.deleteObject" -> return dispatch("atlas.updateObject",obj("id" to a.getString("id"),"archived" to true))
+            "atlas.copyObject" -> {val source=store.one("atlas_objects",a.getString("id")) ?: error("对象不存在");return dispatch("atlas.createObject",obj("type" to source.s("type"),"title" to a.s("title",source.s("title")+" 副本"),"parentId" to source.s("parent_id").ifEmpty{null},"config" to JSONObject(source.s("config"))))}
             "atlas.relate"->{val from=a.getString("fromId");val to=a.getString("toId");require(store.one("atlas_objects",from)!=null && store.one("atlas_objects",to)!=null);val id=uid();store.put("atlas_relations",obj("id" to id,"from_id" to from,"to_id" to to,"kind" to a.s("kind","related")));return obj("id" to id)}
             "atlas.record" -> return record(a,raw)
             "atlas.editRecord","atlas.deleteRecord","atlas.restoreRecord" -> {
@@ -78,6 +84,7 @@ class Actions(val store:AtlasStore) {
                     if(a.has("value")) r.put("value",a.s("value").ifEmpty{null}?.let{decimal(it).toPlainString()} ?: JSONObject.NULL)
                     if(a.has("date")) {LocalDate.parse(a.getString("date"));r.put("local_date",a.getString("date"))}
                     if(a.has("fields")) r.put("fields_json",a.getJSONObject("fields").toString())
+                    if(a.has("value")) {val f=JSONObject(r.s("fields_json"));f.put("_unitVersion",store.config(r.s("metric_id")).optInt("unitVersion",0));r.put("fields_json",f.toString())}
                 } else r.put("deleted",if(action=="atlas.deleteRecord") 1 else 0)
                 r.put("updated_at",now());r.put("revision",r.getLong("revision")+1);store.put("atlas_facts",r);indexFields(r);return obj("id" to r.s("id"))
             }
@@ -86,7 +93,12 @@ class Actions(val store:AtlasStore) {
             "atlas.report" -> {val results=JSONArray();a.getJSONArray("metrics").let{for(i in 0 until it.length()) results.put(store.aggregate(it.getString(i),a.getString("from"),a.getString("to")))};return dispatch("atlas.createObject",obj("type" to "VIEW","title" to a.s("title","统计报告"),"config" to obj("component" to "report","results" to results,"from" to a.s("from"),"to" to a.s("to"))))}
             "atlas.installPlugin","atlas.updatePlugin" -> return install(a.getJSONObject("manifest"),action=="atlas.updatePlugin")
             "atlas.setPluginStatus" -> {store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE'",arrayOf(a.getString("pluginId"))).forEach{store.put("atlas_plugins",it.put("status",if(a.getBoolean("enabled")) "ACTIVE" else "DISABLED"))};if(a.getBoolean("enabled")) store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC LIMIT 1",arrayOf(a.getString("pluginId"))).forEach{store.put("atlas_plugins",it.put("status","ACTIVE"))};return obj("pluginId" to a.s("pluginId"))}
-            "atlas.rollbackPlugin" -> error("在操作历史中撤销对应插件升级，可同步恢复配置与数据")
+            "atlas.rollbackPlugin" -> {
+                val versions=store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC",arrayOf(a.getString("pluginId")));require(versions.size>=2){"没有可回退的版本"}
+                val current=JSONObject(versions[0].s("manifest"));val target=JSONObject(versions[1].s("manifest"));target.put("version",versions[0].getInt("version")+1)
+                target.getJSONArray("metrics").objects().forEach{metric->current.getJSONArray("metrics").objects().firstOrNull{it.s("key")==metric.s("key")}?.let{latest->if(latest.s("unit")!=metric.s("unit")) metric.put("migrationFactor",BigDecimal.ONE.divide(decimal(latest.getString("migrationFactor")),java.math.MathContext.DECIMAL128).toPlainString())}}
+                return install(target,true)
+            }
             "atlas.layout" -> {val id=a.getString("objectId");require(store.one("atlas_objects",id)!=null);store.put("atlas_layout",obj("id" to id,"object_id" to id,"position" to a.optInt("position"),"hidden" to if(a.optBoolean("hidden")) 1 else 0));return obj("id" to id)}
             "atlas.workflow" -> {val spec=a.getJSONObject("spec");require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10);val id=uid();store.put("atlas_workflows",obj("id" to id,"title" to a.getString("title"),"spec" to spec.toString(),"enabled" to 1));return obj("id" to id)}
             "time.start","time.pause","time.resume","time.stop" -> return timer(action,a)
@@ -113,7 +125,7 @@ class Actions(val store:AtlasStore) {
         val metric=a.getString("metricId");val owner=store.one("atlas_objects",metric) ?: error("指标不存在");require(owner.s("type")=="METRIC" && owner.optInt("archived")==0)
         val plugin=owner.s("plugin_id");if(plugin.isNotEmpty()) require(store.query("SELECT id FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE'",arrayOf(plugin)).isNotEmpty()) {"请先启用插件"}
         val c=JSONObject(owner.s("config"));val kind=c.getString("kind");val date=a.s("date",LocalDate.now().toString());LocalDate.parse(date)
-        val fields=a.optJSONObject("fields") ?: JSONObject();val defs=c.optJSONArray("fields") ?: JSONArray()
+        val fields=(a.optJSONObject("fields") ?: JSONObject()).copyJson();fields.put("_unitVersion",c.optInt("unitVersion",0));val defs=c.optJSONArray("fields") ?: JSONArray()
         defs.objects().forEach {f->val key=f.getString("id");val v=fields.s(key);require(!f.optBoolean("required") || v.isNotBlank()){ "请填写 ${f.s("title",key)}" };if(v.isNotEmpty()) when(f.s("type")){"decimal"->decimal(v);"date"->LocalDate.parse(v);"boolean"->require(v in setOf("true","false"));"choice"->require((f.optJSONArray("options") ?: JSONArray()).let{arr->(0 until arr.length()).any{arr.getString(it)==v}});else->require(v.length<=4000)} }
         var value=a.s("value").ifEmpty{null}?.let(::decimal)
         if(c.has("expression")) value=Expressions.eval(c.getJSONObject("expression"),fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap())
@@ -129,7 +141,7 @@ class Actions(val store:AtlasStore) {
         return obj("id" to id,"eventId" to e,"metricId" to metric)
     }
     private fun indexFields(f:JSONObject) {
-        val fields=JSONObject(f.s("fields_json"));fields.keys().forEach{k->store.put("atlas_fields",obj("id" to "${f.s("id")}:$k","fact_id" to f.s("id"),"field_id" to k,"value" to fields.s(k),"type" to if(fields.s(k).toBigDecimalOrNull()!=null) "decimal" else "text"))}
+        val fields=JSONObject(f.s("fields_json"));store.query("SELECT id,field_id FROM atlas_fields WHERE fact_id=?",arrayOf(f.s("id"))).filter{!fields.has(it.s("field_id"))}.forEach{store.remove("atlas_fields",it.s("id"))};fields.keys().forEach{k->store.put("atlas_fields",obj("id" to "${f.s("id")}:$k","fact_id" to f.s("id"),"field_id" to k,"value" to fields.s(k),"type" to if(fields.s(k).toBigDecimalOrNull()!=null) "decimal" else "text"))}
     }
     private fun install(m:JSONObject,upgrade:Boolean):JSONObject {
         manifestValid(m);val plugin=m.getString("id");val existing=store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC",arrayOf(plugin));require(upgrade==existing.isNotEmpty()) {if(upgrade) "插件尚未安装" else "插件已存在，请选择升级"}
@@ -139,7 +151,9 @@ class Actions(val store:AtlasStore) {
         m.getJSONArray("metrics").objects().forEach {c->val key=c.getString("key");val prev=old[key]
             if(prev==null) ids[key]=dispatch("atlas.createObject",obj("type" to "METRIC","title" to c.getString("title"),"parentId" to parent,"pluginId" to plugin,"config" to c)).getString("id")
             else {val before=JSONObject(prev.s("config"));require(before.s("kind")==c.s("kind")){"不能改变历史指标语义"};val id=prev.s("id");ids[key]=id
-                if(before.s("unit")!=c.s("unit")){val factor=decimal(c.getString("migrationFactor"));require(factor>BigDecimal.ZERO);val rows=store.facts(id,limit=500);require(rows.size<500){"此迁移影响超过500条，请先导出并使用迁移工具"};rows.forEach{f->f.remove("metric_title");if(f.s("value").isNotEmpty())f.put("value",(decimal(f.s("value"))*factor).toPlainString());f.put("revision",f.getLong("revision")+1);f.put("updated_at",now());store.put("atlas_facts",f)}}
+                val conversions=before.optJSONArray("conversions") ?: JSONArray();var unitVersion=before.optInt("unitVersion",0)
+                if(before.s("unit")!=c.s("unit")){val factor=decimal(c.getString("migrationFactor"));require(factor>BigDecimal.ZERO);unitVersion++;conversions.put(obj("version" to unitVersion,"factor" to factor.toPlainString(),"from" to before.s("unit"),"to" to c.s("unit")))}
+                c.put("unitVersion",unitVersion);c.put("conversions",conversions)
                 prev.put("config",c.toString());prev.put("title",c.getString("title"));prev.put("revision",prev.getLong("revision")+1);prev.put("updated_at",now());store.put("atlas_objects",prev)
             }
         }

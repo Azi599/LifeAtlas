@@ -50,9 +50,10 @@ class MainActivity:ComponentActivity() {
     val state by vm.ui.collectAsState();var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)}
     val chosen=state.objects.firstOrNull{it.s("id")==selected}
+    val linked=storeRelations(vm,selected,state.revision)
     fun open(id:String) {selected=id;page="spaces";vm.settings.prefs.edit().putString("selected",id).apply()}
     BackHandler(enabled=selected!=null || page!="workspace") {if(selected!=null) selected=chosen?.s("parent_id")?.ifEmpty{null} else page="workspace"}
-    LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}
+    LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}}
     Scaffold(
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
             Text("Life Atlas",style=MaterialTheme.typography.headlineSmall)
@@ -63,7 +64,7 @@ class MainActivity:ComponentActivity() {
             }
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }},
-        bottomBar={NavigationBar {listOf("workspace" to "工作区","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "设置").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={Text(listOf("◎","▦","≡","↗","⚙")[i])},label={Text(title,maxLines=1)})}}
+        bottomBar={NavigationBar {listOf("workspace" to "工作区","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "设置").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={Text(listOf("◎","▦","≡","↗","⚙")[i])},label={Text(title,maxLines=1)})}}}
     ) {padding->
         LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
@@ -74,12 +75,12 @@ class MainActivity:ComponentActivity() {
                     item {Text("我的空间",style=MaterialTheme.typography.titleLarge)}
                     val layouts=state.layouts.associateBy{it.s("object_id")}
                     val cards=state.objects.filter{it.s("type") in setOf("PROJECT","DASHBOARD","VIEW") && layouts[it.s("id")]?.optInt("hidden")!=1}.sortedBy{layouts[it.s("id")]?.optInt("position") ?: 999}.take(8)
-                    if(cards.isEmpty()) item {Text("从一个项目开始。你可以描述需求，也可以手动建立指标和页面。")}
+                    if(cards.isEmpty()) item {Text("暂无项目")}
                     items(cards,key={it.s("id")}) {o->ObjectCard(o,onOpen={open(o.s("id"))},onEdit={edit=o})}
                     if(state.timers.isNotEmpty()) item{Text("进行中的活动",style=MaterialTheme.typography.titleMedium)}
                     items(state.timers,key={it.s("id")}) {TimerCard(it,state.objects,vm)}
                     item{Text("操作历史",style=MaterialTheme.typography.titleMedium)}
-                    items(state.operations.take(8),key={it.s("id")}) {op->Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)){Text(op.s("title"));Text(op.s("created_at").take(19).replace('T',' '),style=MaterialTheme.typography.bodySmall);Text(if(op.optInt("undone")==1) "已撤销" else "已提交",style=MaterialTheme.typography.labelMedium);val result=JSONObject(op.s("result"));if(result.has("steps")) {val ids=linkedSetOf<String>();val steps=result.getJSONObject("steps");steps.keys().forEach{k->steps.optJSONObject(k)?.s("id")?.let(ids::add)};ids.filter{id->state.objects.any{it.s("id")==id}}.forEach{id->TextButton(onClick={open(id)}){Text("打开结果")}}}}}
+                    items(state.operations.take(8),key={it.s("id")}) {op->Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(14.dp)){Text(op.s("title"));Text(op.s("created_at").take(19).replace('T',' '),style=MaterialTheme.typography.bodySmall);Text(if(op.optInt("undone")>0) "已撤销" else "已提交",style=MaterialTheme.typography.labelMedium);val result=JSONObject(op.s("result"));if(result.has("steps")) {val ids=linkedSetOf<String>();val steps=result.getJSONObject("steps");steps.keys().forEach{k->steps.optJSONObject(k)?.s("id")?.let(ids::add)};ids.filter{id->state.objects.any{it.s("id")==id}}.forEach{id->TextButton(onClick={open(id)}){Text("打开结果")}}}}}}
                 }
                 "spaces" -> {
                     item{Text(chosen?.s("title") ?: "我的空间",style=MaterialTheme.typography.headlineSmall)}
@@ -93,8 +94,8 @@ class MainActivity:ComponentActivity() {
                     }
                     val children=state.objects.filter{it.s("parent_id").ifEmpty{null}==selected}
                     items(children,key={it.s("id")}){o->ObjectCard(o,onOpen={open(o.s("id"))},onEdit={edit=o})}
-                    val linked=storeRelations(vm,selected,state.revision);items(linked,key={"linked-${it.s("id")}"}){o->ObjectCard(o,onOpen={open(o.s("id"))},onEdit={edit=o})}
-                    if(children.isEmpty() && chosen?.s("type") !in setOf("METRIC","VIEW")) item {Text("这里还没有内容，点“新建”添加目录、项目或指标。")}
+                    items(linked,key={"linked-${it.s("id")}"}){o->ObjectCard(o,onOpen={open(o.s("id"))},onEdit={edit=o})}
+                    if(children.isEmpty() && chosen?.s("type") !in setOf("METRIC","VIEW")) item {Text("暂无内容")}
                 }
                 "history" -> {
                     item{Text("记录",style=MaterialTheme.typography.headlineSmall)}

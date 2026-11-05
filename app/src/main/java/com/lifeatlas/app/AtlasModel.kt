@@ -30,7 +30,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
         if(state.value.busy) return@launch
         update{it.copy(busy=true,status=title)}
-        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else null,status=result.s("message","已完成"))};load()} catch(e:Exception){update{it.copy(status=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
+        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message","已完成"))};load()} catch(e:Exception){update{it.copy(status=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
     }
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}
     fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在执行"){actions.execute(plan,confirmed)}
@@ -56,7 +56,13 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun history(metric:String?,from:String,to:String,offset:Int)=work("正在查询") {val records=store.facts(metric,from,to,offset);update{it.copy(facts=if(offset==0) records else it.facts+records)};obj("message" to "已显示 ${offset+records.size} 条记录")}
     suspend fun summary(metric:String,from:String,to:String):JSONObject=withContext(Dispatchers.IO) {store.aggregate(metric,from,to)}
     suspend fun chart(metric:String,from:String,to:String):List<JSONObject> = withContext(Dispatchers.IO) {
-        val c=store.config(metric);store.query("SELECT local_date,value FROM atlas_facts WHERE metric_id=? AND deleted=0 AND local_date BETWEEN ? AND ? ORDER BY local_date,occurred_at,created_at,id LIMIT 10000",arrayOf(metric,from,to)).filter{it.s("value").isNotEmpty()}.groupBy{it.s("local_date")}.map{(d,rows)->val values=rows.map{decimal(it.s("value"))};obj("date" to d,"value" to (if(c.s("kind")=="SNAPSHOT") values.last() else MathEngine.sum(values)).toPlainString())}
+        LocalDate.parse(from);LocalDate.parse(to);val c=store.config(metric);val days=linkedMapOf<String,java.math.BigDecimal>()
+        store.readableDatabase.rawQuery("SELECT local_date,value,fields_json FROM atlas_facts WHERE metric_id=? AND deleted=0 AND value IS NOT NULL AND local_date BETWEEN ? AND ? ORDER BY local_date,occurred_at,created_at,id",arrayOf(metric,from,to)).use{cursor->while(cursor.moveToNext()) {
+            val fields=JSONObject(cursor.getString(2));if(c.s("role") in setOf("income","expense") && fields.s("flow")=="transfer") continue
+            val d=cursor.getString(0);val v=normalizedValue(decimal(cursor.getString(1)),fields,c)
+            days[d]=if(c.s("kind")=="SNAPSHOT") v else (days[d] ?: java.math.BigDecimal.ZERO)+v
+        }}
+        days.map{(d,v)->obj("date" to d,"value" to v.toPlainString())}
     }
     fun build(id:String)=work("正在提交构建") {val request=store.one("atlas_builds",id) ?: error("构建任务不存在");val result=BuildClient(settings).submit(JSONObject(request.s("request")));store.transact("提交云端构建"){store.put("atlas_builds",request.put("status",result.s("status")).put("remote_id",result.s("id")).put("detail",result.s("detail")).put("updated_at",now()));obj("message" to "构建请求已提交")}}
     fun buildStatus(id:String)=work("正在查询构建") {val row=store.one("atlas_builds",id) ?: error("任务不存在");val result=BuildClient(settings).status(row.getString("remote_id"));store.transact("更新构建状态"){store.put("atlas_builds",row.put("status",result.s("status")).put("artifact_url",result.s("artifactUrl")).put("detail",result.s("detail")).put("updated_at",now()));obj("message" to result.s("status"))}}

@@ -29,7 +29,6 @@ import java.time.YearMonth
         result?.let{r->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(methodName(r.s("method")),style=MaterialTheme.typography.labelLarge);Text("${r.s("value","暂无数据")} ${r.s("unit")}",style=MaterialTheme.typography.headlineMedium);Text("${r.optLong("count")} 条有效数值记录",style=MaterialTheme.typography.bodySmall)}}}
         if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
         if(points.isEmpty())Text("该月暂无趋势数据") else Trend(points,config.s("unit"),chartType)
-        Text("发生时刻未知的记录保留日期；图中的空缺日期没有补零。",style=MaterialTheme.typography.bodySmall)
         TextButton(onClick={val ym=runCatching{YearMonth.parse(month)}.getOrNull();if(ym!=null)vm.action("atlas.report",obj("title" to "${metric.s("title")} $month 报告","metrics" to org.json.JSONArray().put(metric.s("id")),"from" to ym.atDay(1).toString(),"to" to ym.atEndOfMonth().toString()),"生成月度报告")}){Text("保存月度报告")}
     }
 }
@@ -65,6 +64,6 @@ import java.time.YearMonth
         if(metrics.any{JSONObject(it.s("config")).s("role") in setOf("income","expense")})cash?.let{c->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("本月现金流",style=MaterialTheme.typography.titleMedium);Text("收入 ${c.s("income")}　支出 ${c.s("expense")}");Text("净额 ${c.s("net")}",style=MaterialTheme.typography.headlineSmall)}}}
         Pick("选择指标",metrics.map{it.s("id") to it.s("title")},metricId){metricId=it}
         metrics.firstOrNull{it.s("id")==metricId}?.let{m->MetricPanel(m,vm,state.revision,onRecord={vm.work("录入提示"){obj("message" to "请在空间中打开指标并点击新增记录")}})}
-        if(metrics.isEmpty())Text("建立指标并记录后，可按月份分析趋势。")
+        if(metrics.isEmpty())Text("暂无指标")
     }
 }
