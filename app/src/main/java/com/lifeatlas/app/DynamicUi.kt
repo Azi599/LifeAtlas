@@ -12,7 +12,7 @@ import java.time.YearMonth
 @Composable fun DynamicScreen(config:JSONObject,state:AtlasState,vm:AtlasModel,onRecord:(JSONObject)->Unit,onOpen:(String)->Unit) {
     Column(verticalArrangement=Arrangement.spacedBy(18.dp)) {
         (config.optJSONArray("components") ?: JSONArray()).objects().forEach{component->
-            val metric=state.objects.firstOrNull{it.s("id")==component.s("metricId")}
+            val metric=resolvedObject(component.s("metricId"),state,vm)
             when(component.s("component")) {
                 "text"->Text(component.s("text"))
                 "navigation"->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onOpen(component.s("objectId"))}){Text(component.s("title","打开"))}
@@ -36,4 +36,11 @@ import java.time.YearMonth
         Pick("表单预览",metrics.map{it.s("key") to it.s("title")},key){key=it;fields=emptyMap();value=""}
         if(metric!=null){OutlinedTextField(value,{value=it},label={Text("数值 · ${metric.s("unit")}")},modifier=Modifier.fillMaxWidth());(metric.optJSONArray("fields") ?: JSONArray()).objects().forEach{f->DynamicField(f,fields[f.s("id")] ?: ""){fields=fields+(f.s("id") to it)}}}
     }
+}
+
+@Composable fun resolvedObject(id:String,state:AtlasState,vm:AtlasModel):JSONObject? {
+    val known=state.objects.firstOrNull{it.s("id")==id}
+    var loaded by remember(id,state.revision){mutableStateOf<JSONObject?>(known)}
+    LaunchedEffect(id,state.revision){if(known==null && id.isNotEmpty())loaded=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.one("atlas_objects",id)}}
+    return known ?: loaded
 }

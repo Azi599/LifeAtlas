@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
@@ -17,7 +18,7 @@ import org.json.JSONObject
             events.forEach{event->Column(Modifier.fillMaxWidth().padding(start=12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                 if(event.s("raw_input").isNotBlank())Text(event.s("raw_input"),style=MaterialTheme.typography.bodyLarge)
                 linked[event.s("id")].orEmpty().forEach{fact->val c=vm.store.config(fact.s("metric_id"));val v=fact.s("value").takeIf{it.isNotEmpty()}?.let{normalizedValue(decimal(it),org.json.JSONObject(fact.s("fields_json")),c).toPlainString()} ?: "未填写"
-                    Row(Modifier.fillMaxWidth().clickable{onFact(fact)}.padding(vertical=8.dp)){Text(fact.s("metric_title"),Modifier.weight(1f));Text(v+" "+c.s("unit"))}
+                    Row(Modifier.fillMaxWidth().testTag("timeline-item").clickable{onFact(fact)}.padding(vertical=8.dp)){Text(fact.s("metric_title"),Modifier.weight(1f));Text(v+" "+c.s("unit"))}
                 }
                 if(event.optLong("fact_count")>100)Text("共 "+event.optLong("fact_count")+" 条记录",style=MaterialTheme.typography.bodySmall)
                 HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)

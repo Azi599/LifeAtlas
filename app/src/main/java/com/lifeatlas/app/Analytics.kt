@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.toArgb
@@ -45,7 +46,7 @@ import java.time.YearMonth
     if(data.isEmpty()) return
     val density=LocalDensity.current;val textPx=with(density){11.sp.toPx()};val accent=MaterialTheme.colorScheme.primary;val labelColor=readableColor(MaterialTheme.colorScheme.onSurfaceVariant,LocalAtlasBackground.current).toArgb();val grid=LocalAtlasTokens.current.chartGrid
     Column {Text(if(type=="heatmap") "按日分布" else "日趋势 · $unit",style=MaterialTheme.typography.titleMedium)
-        Canvas(Modifier.fillMaxWidth().height(210.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(210.dp).testTag("trend-chart")) {
             val left=56.dp.toPx();val top=16.dp.toPx();val right=size.width-8.dp.toPx();val bottom=size.height-38.dp.toPx();val width=right-left;val height=bottom-top
             val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=labelColor;textSize=textPx}
             val minDay=data.minOf{it.first};val maxDay=data.maxOf{it.first};val dx=(maxDay-minDay).coerceAtLeast(1).toDouble()

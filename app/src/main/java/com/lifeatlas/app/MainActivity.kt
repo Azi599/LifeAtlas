@@ -24,8 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
@@ -48,6 +50,7 @@ class MainActivity:ComponentActivity() {
     private val speech=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){r->r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let{vm.saveDraft(it);vm.submit(it)}}
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         vm=ViewModelProvider(this)[AtlasModel::class.java]
         setContent {
             val appState by vm.ui.collectAsState()
@@ -55,12 +58,17 @@ class MainActivity:ComponentActivity() {
             AtlasTheme(JSONObject(appState.themeConfig),dark,appState.compact) {
                 val foreground=MaterialTheme.colorScheme.onBackground
                 val navigationForeground=MaterialTheme.colorScheme.onSurface
+                val barBackground=LocalAtlasTokens.current.gradient.firstOrNull()?.second ?: MaterialTheme.colorScheme.background
+                val navigationBackground=MaterialTheme.colorScheme.surface
                 SideEffect {
                     val transparent=android.graphics.Color.TRANSPARENT
                     enableEdgeToEdge(statusBarStyle=if(foreground.luminance()<.5f)androidx.activity.SystemBarStyle.light(transparent,transparent)else androidx.activity.SystemBarStyle.dark(transparent),navigationBarStyle=if(navigationForeground.luminance()<.5f)androidx.activity.SystemBarStyle.light(transparent,transparent)else androidx.activity.SystemBarStyle.dark(transparent))
                     val status=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
                     val navigation=android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
                     val flags=(if(foreground.luminance()<.5f)status else 0) or (if(navigationForeground.luminance()<.5f)navigation else 0)
+                    window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(barBackground.toArgb()))
+                    window.statusBarColor=barBackground.toArgb();window.navigationBarColor=navigationBackground.toArgb();window.isStatusBarContrastEnforced=false
+                    androidx.core.view.ViewCompat.requestApplyInsets(window.decorView)
                     window.insetsController?.setSystemBarsAppearance(flags,status or navigation)
                 }
                 App(vm,
@@ -122,7 +130,7 @@ class MainActivity:ComponentActivity() {
             if(!keyboard)NavigationBar(containerColor=MaterialTheme.colorScheme.surface) {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}
         }}
     ) {padding->
-        LazyColumn(Modifier.fillMaxSize().padding(padding),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("atlas-list"),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
             when(page) {
                 "workspace" -> {
@@ -146,7 +154,7 @@ class MainActivity:ComponentActivity() {
                         item{MetricPanel(chosen,vm,state.revision,onRecord={record=chosen})}
                     } else if(chosen?.s("type")=="VIEW") {
                         val c=JSONObject(chosen.s("config"))
-                        if(c.s("component")=="chart") {val metric=objects.firstOrNull{it.s("id")==c.s("metricId")};if(metric!=null)item{MetricPanel(metric,vm,state.revision,onRecord={record=metric},chartType=c.s("chart","line"))}}
+                        if(c.s("component")=="chart") {val metric=resolvedObject(c.s("metricId"),state,vm);if(metric!=null)item{MetricPanel(metric,vm,state.revision,onRecord={record=metric},chartType=c.s("chart","line"))}}
                         else if(c.s("component")=="report") item{ReportPanel(c,state,vm)}
                         else if(c.s("component")=="schema") item{DynamicScreen(c,state,vm,onRecord={record=it},onOpen={open(it)})}
                     }
@@ -162,7 +170,7 @@ class MainActivity:ComponentActivity() {
                     item{TextButton(onClick={eventDialog=true}){Text("记录文字事件")};HistoryFilter(vm,state)}
                     if(timeline)item{TimelinePanel(vm,state,onFact={editingFact=it})}
                     if(!timeline)items(state.events.filter{it.optInt("fact_count")==0},key={"event-${it.s("id")}"}){event->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(event.s("raw_input"));Text(event.s("local_date","日期未指定"),style=MaterialTheme.typography.bodySmall)}}}
-                    if(!timeline)items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else if(f.s("precision")=="INTERVAL") formatInstant(f.s("start_at"),f.s("zone"))+" — "+formatInstant(f.s("end_at"),f.s("zone")) else formatInstant(f.s("occurred_at"),f.s("zone")),style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
+                    if(!timeline)items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().testTag("record-item").clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else if(f.s("precision")=="INTERVAL") formatInstant(f.s("start_at"),f.s("zone"))+" — "+formatInstant(f.s("end_at"),f.s("zone")) else formatInstant(f.s("occurred_at"),f.s("zone")),style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
                     if(state.facts.isEmpty())item{Text("所选范围没有记录")}
                 }
                 "analytics" -> {
