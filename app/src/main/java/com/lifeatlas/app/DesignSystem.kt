@@ -88,3 +88,8 @@ val LocalAtlasBackground=staticCompositionLocalOf{Color.White}
 @Composable fun OutlinedTextField(value:String,onValueChange:(String)->Unit,modifier:Modifier=Modifier,label:(@Composable ()->Unit)?=null,enabled:Boolean=true,singleLine:Boolean=false,minLines:Int=1,maxLines:Int=if(singleLine)1 else Int.MAX_VALUE,visualTransformation:androidx.compose.ui.text.input.VisualTransformation=androidx.compose.ui.text.input.VisualTransformation.None) {
     androidx.compose.material3.OutlinedTextField(value,onValueChange,modifier=modifier,label=label,enabled=enabled,singleLine=singleLine,minLines=minLines,maxLines=maxLines,visualTransformation=visualTransformation,colors=OutlinedTextFieldDefaults.colors(focusedContainerColor=MaterialTheme.colorScheme.surface,unfocusedContainerColor=MaterialTheme.colorScheme.surface,disabledContainerColor=MaterialTheme.colorScheme.surface))
 }
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable fun ActionRow(content:@Composable androidx.compose.foundation.layout.FlowRowScope.()->Unit) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp),content=content)
+}

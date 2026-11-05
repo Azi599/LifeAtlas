@@ -32,7 +32,7 @@ fun componentName(type:String)=mapOf("form" to "录入表单","summary" to "统�
 @Composable fun PageBuilderDialog(vm:AtlasModel,parent:String?,existing:JSONObject?=null,onDismiss:()->Unit,onSave:(String,JSONArray)->Unit) {
     val state by vm.ui.collectAsState()
     var title by remember(existing?.s("id")){mutableStateOf(existing?.s("title").orEmpty())}
-    var components by remember(existing?.s("id")){mutableStateOf(existing?.let{JSONObject(it.s("config")).optJSONArray("components")?.objects()?.map{it.copyJson()}} ?: emptyList())}
+    var components by remember(existing?.s("id")){mutableStateOf<List<JSONObject>>(existing?.let{JSONObject(it.s("config")).optJSONArray("components")?.objects()?.map{it.copyJson()}} ?: emptyList())}
     var component by remember{mutableStateOf("form")};var metric by remember{mutableStateOf("")};var target by remember{mutableStateOf("")};var heading by remember{mutableStateOf("")};var text by remember{mutableStateOf("")};var chart by remember{mutableStateOf("line")};var method by remember{mutableStateOf("")};var range by remember{mutableStateOf("CURRENT_MONTH")};var from by remember{mutableStateOf(YearMonth.now().atDay(1).toString())};var to by remember{mutableStateOf(YearMonth.now().atEndOfMonth().toString())};var preview by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")}
     val hasMetric=component in setOf("form","summary","chart","history")
     AlertDialog(onDismissRequest=onDismiss,title={Text(if(existing==null)"新建页面"else "编辑页面")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){

@@ -19,7 +19,7 @@ data class AtlasState(
     val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val themeConfig:String=ThemeDefaults.config().toString(),val themeId:String="lavender",val objects:List<JSONObject> = emptyList(),val facts:List<JSONObject> = emptyList(),
     val operations:List<JSONObject> = emptyList(),val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
     val historyMetric:String="",val historyFrom:String=java.time.YearMonth.now().atDay(1).toString(),val historyTo:String=LocalDate.now().toString(),val historyOffset:Int=0,val events:List<JSONObject> = emptyList(),val builds:List<JSONObject> = emptyList(),val layouts:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
-    val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val error:String=""
+    val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val imageLayout:String="[]",val error:String=""
 )
 class AtlasModel(app:Application):AndroidViewModel(app) {
     val store=AtlasStore(app);val settings=Settings(app);val actions=Actions(store);val planner=Planner(actions)
@@ -44,12 +44,12 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}
     fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在保存"){
         val result=actions.execute(plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)},confirmed)
-        if(result.s("status")=="DONE" && plan.optBoolean("imageImport")){update{it.copy(image=null,imageText="")};saveDraft("")}
+        if(result.s("status")=="DONE" && plan.optBoolean("imageImport")){update{it.copy(image=null,imageText="",imageLayout="[]")};saveDraft("")}
         result
     }
     private fun planInput(input:String,source:String="",importOnly:Boolean=false):JSONObject {
         val context=obj("appearance" to ThemeRepository(store).appearance(),"currentTheme" to ThemeRepository(store).current(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
-        if(source.isNotBlank())context.put("imageText",source).put("imageImport",importOnly)
+        if(source.isNotBlank())context.put("imageText",source).put("imageLayout",JSONArray(state.value.imageLayout)).put("imageImport",importOnly)
         var attempt=0
         while(true) {
             val plan=planner.plan(settings.ai(),input,context)
@@ -76,15 +76,15 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun undo(redo:Boolean=false)=work(if(redo) "正在恢复" else "正在撤销") {obj("message" to ((if(redo) "已恢复：" else "已撤销：")+store.undo(redo)))}
     fun addImage(uri:Uri)=work("正在识别图片") {
         val resolver=getApplication<Application>().contentResolver;val mime=resolver.getType(uri) ?: "image/jpeg";require(mime.startsWith("image/")){"请选择图片"}
-        update{it.copy(image=uri.toString(),imageText="",pending=null,result=null)}
-        val text=ImageText.read(getApplication(),uri)
+        update{it.copy(image=uri.toString(),imageText="",imageLayout="[]",pending=null,result=null)}
+        val reading=ImageText.readDetailed(getApplication(),uri);val text=reading.text
         require(text.isNotBlank()){"未识别到清晰文字，请更换图片"}
-        update{it.copy(imageText=text,status="正在整理图片记录")}
+        update{it.copy(imageText=text,imageLayout=reading.layout,status="正在整理图片记录")}
         if(settings.ai().key.isBlank())return@work obj("message" to "文字已识别，请配置 AI 后整理记录")
         planInput(draft.ifBlank{"识别图片中的实际记录，列出数值与发生日期，供我核对保存"},text,true)
     }
-    fun editImageText(text:String){update{it.copy(imageText=text)}}
-    fun clearImage(){update{it.copy(image=null,imageText="",pending=null,error="",status="图片已移除")}}
+    fun editImageText(text:String){update{it.copy(imageText=text,imageLayout="[]")}}
+    fun clearImage(){update{it.copy(image=null,imageText="",imageLayout="[]",pending=null,error="",status="图片已移除")}}
     fun export(uri:Uri,csv:Boolean=false)=work("正在导出") {getApplication<Application>().contentResolver.openOutputStream(uri)!!.bufferedWriter().use{if(csv) store.exportCsv(it) else store.export(it)};obj("message" to "导出完成")}
     fun restore(uri:Uri)=work("正在恢复备份") {getApplication<Application>().contentResolver.openInputStream(uri)!!.bufferedReader().use(store::import);obj("message" to "恢复完成，覆盖前的数据已保存为恢复点")}
     fun importCsv(uri:Uri,metric:String?,valueColumn:String,dateColumn:String)=work("正在导入 CSV") {
