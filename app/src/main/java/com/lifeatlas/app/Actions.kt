@@ -160,7 +160,7 @@ class Actions(val store:AtlasStore) {
                 val anchorId=a.getString("snapshotMetricId");val definition=store.config(anchorId);require(definition.s("kind")=="SNAPSHOT");val to=a.s("asOf",LocalDate.now().toString());LocalDate.parse(to)
                 val anchor=store.query("SELECT * FROM atlas_facts WHERE metric_id=? AND deleted=0 AND value IS NOT NULL AND local_date<=? ORDER BY local_date DESC,occurred_at DESC,created_at DESC LIMIT 1",arrayOf(anchorId,to)).firstOrNull() ?: return obj("value" to null,"reason" to "缺少实测快照")
                 var balance=normalizedValue(decimal(anchor.s("value")),JSONObject(anchor.s("fields_json")),definition);var uncertain=BigDecimal.ZERO;var uncertainCount=0;var missingCount=0
-                val changes=a.getJSONArray("changeMetricIds");for(i in 0 until changes.length()){
+                val changes=a.getJSONArray("changeMetricIds");require((0 until changes.length()).map{changes.getString(it)}.distinct().size==changes.length()){"账户变化指标重复"};for(i in 0 until changes.length()){
                     val id=changes.getString(i);val c=store.config(id);require(c.s("kind")=="CHANGE" && c.s("unit")==definition.s("unit")){"账户变化必须为同单位的变化指标"}
                     store.readableDatabase.rawQuery("SELECT value,fields_json,local_date,occurred_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND local_date BETWEEN ? AND ?",arrayOf(id,anchor.s("local_date"),to)).use{cursor->while(cursor.moveToNext()){
                         val relation=if(cursor.getString(2)>anchor.s("local_date")) 1 else if(anchor.s("occurred_at").isNotEmpty() && !cursor.isNull(3)) Instant.parse(cursor.getString(3)).compareTo(Instant.parse(anchor.s("occurred_at"))) else 0
@@ -180,8 +180,8 @@ class Actions(val store:AtlasStore) {
             "atlas.navigate" -> return obj("page" to a.s("page","spaces"),"objectId" to a.s("objectId"))
             "atlas.requestBuild" -> {val id=uid();store.put("atlas_builds",obj("id" to id,"request" to a.toString(),"status" to "AWAITING_SERVICE","remote_id" to null,"artifact_url" to null,"detail" to "请在应用更新中配置构建服务","created_at" to now(),"updated_at" to now()));return obj("id" to id,"status" to "AWAITING_SERVICE")}
             "atlas.correlation" -> {
-                fun byDay(id:String):Map<String,Double> {val rows=store.facts(id,a.getString("from"),a.getString("to"),0,500);require(rows.size<500){"请缩小日期范围以计算相关性"};return rows.filter{it.s("value").isNotEmpty()}.groupBy{it.s("local_date")}.mapValues{(_,v)->MathEngine.mean(v.map{decimal(it.s("value"))})!!.toDouble()}}
-                val x=byDay(a.getString("xMetricId"));val y=byDay(a.getString("yMetricId"));val pairs=x.keys.intersect(y.keys).map{x.getValue(it) to y.getValue(it)};return obj("pearson" to MathEngine.pearson(pairs),"samplePairs" to pairs.size,"definition" to "共同有数据日期；日内取均值；相关性不表明因果")
+                fun byDay(id:String):Map<String,Double> = store.dailySeries(id,a.getString("from"),a.getString("to")).mapNotNull{p->p.s("value").toDoubleOrNull()?.takeIf{it.isFinite()}?.let{p.s("date") to it}}.toMap()
+                val x=byDay(a.getString("xMetricId"));val y=byDay(a.getString("yMetricId"));val pairs=x.keys.intersect(y.keys).map{x.getValue(it) to y.getValue(it)};return obj("pearson" to MathEngine.pearson(pairs),"samplePairs" to pairs.size,"definition" to "共同有数据日期；按各指标的日统计规则对齐；相关性不表明因果")
             }
             else -> {
                 val active=store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'")

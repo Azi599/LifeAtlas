@@ -41,7 +41,7 @@ import kotlin.math.*
             stops.forEachIndexed{i,stop->
                 Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Box(Modifier.size(26.dp).background(themeColor(stop.s("color")),MaterialTheme.shapes.extraSmall));TextButton(onClick={picker="stop:"+i}){Text("色标 "+(i+1))};if(stops.size>2)TextButton(onClick={val a=c.getJSONArray("stops").let{JSONArray(it.toString())};a.remove(i);change("stops",a)}){Text("移除")}}
                 Text("位置 "+"%.0f".format(stop.getDouble("position")*100)+"%",style=MaterialTheme.typography.labelLarge)
-                val lo=if(i==0)0f else stops[i-1].getDouble("position").toFloat()+.01f;val hi=if(i==stops.lastIndex)1f else stops[i+1].getDouble("position").toFloat()-.01f
+                val lo=if(i==0)0f else (stops[i-1].getDouble("position").toFloat()+stop.getDouble("position").toFloat())/2;val hi=if(i==stops.lastIndex)1f else (stops[i+1].getDouble("position").toFloat()+stop.getDouble("position").toFloat())/2
                 Slider(stop.getDouble("position").toFloat(),{v->val a=JSONArray(c.getJSONArray("stops").toString());a.getJSONObject(i).put("position",v.toDouble());change("stops",a)},valueRange=lo..hi)
             }
             if(stops.size<5)OutlinedButton(onClick={val sorted=stops.zipWithNext().maxBy{it.second.getDouble("position")-it.first.getDouble("position")};val pos=(sorted.first.getDouble("position")+sorted.second.getDouble("position"))/2;val next=stops.map{it.copyJson()}+obj("color" to c.s("primary"),"position" to pos);change("stops",JSONArray(next.sortedBy{it.getDouble("position")}))}){Text("添加色标")}

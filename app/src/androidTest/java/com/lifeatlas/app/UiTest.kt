@@ -28,13 +28,30 @@ class UiTest {
         rule.onNodeWithText("植物养护测试").performScrollTo().performClick()
         rule.onNodeWithText("浇水量").performScrollTo().performClick()
         rule.onNodeWithText("新增记录").assertExists()
+        capture("lifeatlas-project.png")
+    }
+    @Test fun themeEditorPreviewAndRestartRender() {
+        var vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()};rule.waitForIdle();capture("default-home.png")
+        rule.onNodeWithText("我的").performClick();rule.onNodeWithText("外观").performScrollTo().performClick();rule.onNodeWithText("已保存主题：薰衣草").assertExists();capture("theme-editor.png")
+        rule.onNodeWithText("主色").performScrollTo().performClick();rule.onNodeWithText("调色盘").assertExists();capture("color-picker.png");rule.onNodeWithText("取消").performClick()
+        rule.onNodeWithText("应用图标").performScrollTo();capture("icon-masks.png")
+        val config=ThemeDefaults.config();config.getJSONObject("light").put("gradient",true).put("angle",30).put("stops",JSONArray().put(obj("color" to "#D8BFF2","position" to 0)).put(obj("color" to "#FAC9DE","position" to 0.5)).put(obj("color" to "#E8DDF9","position" to 1)))
+        runBlocking{vm.action("atlas.saveTheme",obj("id" to "ui-gradient","title" to "粉紫渐变","config" to config),"保存主题").join()}
+        rule.activityRule.scenario.recreate();vm=ViewModelProvider(rule.activity)[AtlasModel::class.java];runBlocking{vm.refresh().join()};rule.waitForIdle();org.junit.Assert.assertEquals("ui-gradient",vm.ui.value.themeId);capture("custom-gradient-home.png")
+        val manifest=obj("id" to "ui.preview"+System.currentTimeMillis(),"title" to "观鸟记录","version" to 1,"metrics" to JSONArray().put(obj("key" to "bird","title" to "观察数量","kind" to "CHANGE","unit" to "只","aggregate" to "SUM","fields" to JSONArray().put(obj("id" to "species","title" to "鸟类名称","type" to "text")))))
+        runBlocking{vm.action("atlas.installPlugin",obj("manifest" to manifest),"预览观鸟记录").join()};rule.waitForIdle();rule.onNodeWithText("表单预览：观察数量").performScrollTo();capture("plugin-generation-preview.png")
+        vm.clearPending();runBlocking{vm.action("atlas.setAppearance",obj("mode" to "dark"),"深色").join()};rule.waitForIdle();capture("dark-home.png")
+        runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()}
+    }
+    private fun capture(name:String) {
         rule.waitForIdle()
         val instrumentation=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync();Thread.sleep(600)
         val bitmap=instrumentation.uiAutomation.takeScreenshot()
         val context=instrumentation.targetContext
-        val values=android.content.ContentValues().apply{put(android.provider.MediaStore.Images.Media.DISPLAY_NAME,"lifeatlas-project.png");put(android.provider.MediaStore.Images.Media.MIME_TYPE,"image/png");put(android.provider.MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LifeAtlas")}
+        val values=android.content.ContentValues().apply{put(android.provider.MediaStore.Images.Media.DISPLAY_NAME,name);put(android.provider.MediaStore.Images.Media.MIME_TYPE,"image/png");put(android.provider.MediaStore.Images.Media.RELATIVE_PATH,"Pictures/LifeAtlas")}
         val uri=context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values)!!
-        context.contentResolver.openOutputStream(uri)!!.use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+        context.contentResolver.openOutputStream(uri)!!.use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
     }
 }

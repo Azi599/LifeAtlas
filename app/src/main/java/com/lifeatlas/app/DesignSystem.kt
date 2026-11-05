@@ -34,7 +34,7 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
     val defaults=Typography();val font=FontFamily.SansSerif
     val typography=defaults.copy(headlineSmall=TextStyle(fontFamily=font,fontSize=27.sp,lineHeight=36.sp,fontWeight=FontWeight.Medium),titleLarge=TextStyle(fontFamily=font,fontSize=22.sp,lineHeight=30.sp,fontWeight=FontWeight.Medium),titleMedium=TextStyle(fontFamily=font,fontSize=17.sp,lineHeight=25.sp,fontWeight=FontWeight.Medium),bodyLarge=TextStyle(fontFamily=font,fontSize=16.sp,lineHeight=25.sp),bodyMedium=TextStyle(fontFamily=font,fontSize=14.sp,lineHeight=22.sp),bodySmall=TextStyle(fontFamily=font,fontSize=13.sp,lineHeight=19.sp),labelLarge=TextStyle(fontFamily=font,fontSize=14.sp,lineHeight=21.sp,fontWeight=FontWeight.Medium),labelSmall=TextStyle(fontFamily=font,fontSize=12.sp,lineHeight=18.sp,fontWeight=FontWeight.Medium))
     val stops=if(c.optBoolean("gradient"))c.getJSONArray("stops").objects().map{it.getDouble("position").toFloat() to lerp(bg,themeColor(it.s("color")),0.22f)}else emptyList()
-    CompositionLocalProvider(LocalAtlasTokens provides AtlasTokens(gap=if(compact)8.dp else 16.dp,chartGrid=scheme.outlineVariant,gradient=stops,angle=c.optDouble("angle",135.0).toFloat())) {
+    CompositionLocalProvider(LocalAtlasBackground provides bg,LocalContentColor provides scheme.onBackground,LocalAtlasTokens provides AtlasTokens(gap=if(compact)8.dp else 16.dp,chartGrid=scheme.outlineVariant,gradient=stops,angle=c.optDouble("angle",135.0).toFloat())) {
         MaterialTheme(colorScheme=scheme,typography=typography,shapes=Shapes(extraSmall=RoundedCornerShape(6.dp),small=RoundedCornerShape(10.dp),medium=RoundedCornerShape(14.dp),large=RoundedCornerShape(20.dp),extraLarge=RoundedCornerShape(24.dp)),content=content)
     }
 }
@@ -49,10 +49,10 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
     androidx.compose.material3.Button(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,contentPadding=contentPadding,content=content)
 }
 @Composable fun OutlinedButton(onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,contentPadding:PaddingValues=PaddingValues(horizontal=16.dp,vertical=12.dp),content:@Composable RowScope.()->Unit) {
-    androidx.compose.material3.OutlinedButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,contentPadding=contentPadding,content=content)
+    androidx.compose.material3.OutlinedButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.outlinedButtonColors(contentColor=readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
 }
 @Composable fun TextButton(onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,contentPadding:PaddingValues=PaddingValues(horizontal=12.dp,vertical=10.dp),content:@Composable RowScope.()->Unit) {
-    androidx.compose.material3.TextButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,contentPadding=contentPadding,content=content)
+    androidx.compose.material3.TextButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.textButtonColors(contentColor=readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
 }
 @Composable fun NavGlyph(index:Int,selected:Boolean) {
     val color=if(selected)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -65,4 +65,21 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
             else->{drawCircle(color,w*.35f,style=stroke);drawCircle(color,w*.12f,style=stroke);for(i in 0..7){val a=i*PI/4;drawLine(color,Offset(center.x+(cos(a)*w*.35).toFloat(),center.y+(sin(a)*h*.35).toFloat()),Offset(center.x+(cos(a)*w*.46).toFloat(),center.y+(sin(a)*h*.46).toFloat()),1.8.dp.toPx())}}
         }
     }
+}
+
+val LocalAtlasBackground=staticCompositionLocalOf{Color.White}
+@Composable fun Card(modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit) {
+    val background=MaterialTheme.colorScheme.surface
+    androidx.compose.material3.Card(modifier,colors=CardDefaults.cardColors(containerColor=background),elevation=CardDefaults.cardElevation(defaultElevation=0.dp)) {CompositionLocalProvider(LocalAtlasBackground provides background){content()}}
+}
+@Composable fun OutlinedCard(modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit) {
+    val background=MaterialTheme.colorScheme.surface
+    androidx.compose.material3.OutlinedCard(modifier,colors=CardDefaults.outlinedCardColors(containerColor=background)) {CompositionLocalProvider(LocalAtlasBackground provides background){content()}}
+}
+@Composable fun Surface(modifier:Modifier=Modifier,shape:Shape=RectangleShape,content:@Composable ()->Unit) {
+    val background=MaterialTheme.colorScheme.surface
+    androidx.compose.material3.Surface(modifier,shape=shape,color=background){CompositionLocalProvider(LocalAtlasBackground provides background,LocalContentColor provides MaterialTheme.colorScheme.onSurface){content()}}
+}
+@Composable fun OutlinedTextField(value:String,onValueChange:(String)->Unit,modifier:Modifier=Modifier,label:(@Composable ()->Unit)?=null,enabled:Boolean=true,singleLine:Boolean=false,minLines:Int=1,maxLines:Int=if(singleLine)1 else Int.MAX_VALUE,visualTransformation:androidx.compose.ui.text.input.VisualTransformation=androidx.compose.ui.text.input.VisualTransformation.None) {
+    androidx.compose.material3.OutlinedTextField(value,onValueChange,modifier=modifier,label=label,enabled=enabled,singleLine=singleLine,minLines=minLines,maxLines=maxLines,visualTransformation=visualTransformation,colors=OutlinedTextFieldDefaults.colors(focusedContainerColor=MaterialTheme.colorScheme.surface,unfocusedContainerColor=MaterialTheme.colorScheme.surface,disabledContainerColor=MaterialTheme.colorScheme.surface))
 }

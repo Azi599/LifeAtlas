@@ -72,4 +72,31 @@ class StorageTest {
         context.deleteDatabase("restored.db");val restored=AtlasStore(context,"restored.db")
         try{file.bufferedReader().use(restored::import);assertEquals(1_000_000L,restored.query("SELECT COUNT(*) n FROM atlas_facts").first().getLong("n"));assertEquals(stats.s("value"),restored.aggregate(id,"2024-01-01","2024-01-31","SUM").s("value"))}finally{restored.close();context.deleteDatabase("restored.db");file.delete()}
     }
+    @Test fun themeSaveReopenUndoAndBackup() {
+        val config=ThemeDefaults.config();config.getJSONObject("light").put("primary","#B894CB").put("gradient",true).put("angle",42)
+        actions.single("atlas.saveTheme",obj("id" to "custom","title" to "我的渐变","config" to config));actions.single("atlas.setAppearance",obj("compact" to true,"mode" to "dark"))
+        db.close();db=AtlasStore(context,"tests.db");actions=Actions(db)
+        assertEquals("custom",ThemeRepository(db).current().s("id"));assertEquals("dark",ThemeRepository(db).appearance().s("mode"))
+        val out=StringWriter();db.export(out);actions.single("atlas.resetTheme",JSONObject());assertEquals("lavender",ThemeRepository(db).current().s("id"));db.undo();assertEquals("custom",ThemeRepository(db).current().s("id"))
+        db.import(StringReader(out.toString()).buffered());assertEquals("custom",ThemeRepository(db).current().s("id"));assertEquals(42,JSONObject(ThemeRepository(db).current().s("config")).getJSONObject("light").getInt("angle"))
+    }
+    @Test fun nonAtomicRetrySkipsCommittedSteps() {
+        val request="partial";val bad=obj("requestId" to request,"atomic" to false,"steps" to JSONArray().put(obj("stepId" to "first","actionId" to "atlas.createObject","args" to obj("type" to "PROJECT","title" to "一次"))).put(obj("stepId" to "second","actionId" to "missing.operation","args" to JSONObject())))
+        assertEquals("PARTIAL",actions.execute(bad).s("status"));bad.getJSONArray("steps").getJSONObject(1).put("actionId","atlas.createObject").put("args",obj("type" to "PROJECT","title" to "重试"));assertEquals("DONE",actions.execute(bad).s("status"));assertEquals(2,db.objects(all=true).size)
+    }
+    @Test fun crossMidnightSumAndSeriesAgree() {
+        val previous=java.util.TimeZone.getDefault();try{java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));val id=metric("ALLOCATION","SUM");actions.single("atlas.record",obj("metricId" to id,"date" to "2026-11-04","startAt" to "2026-11-04T23:00:00Z","endAt" to "2026-11-05T01:00:00Z","zone" to "UTC"));assertEquals("3600",db.aggregate(id,"2026-11-05","2026-11-05").s("value"));val days=db.dailySeries(id,"2026-11-04","2026-11-05");assertEquals(2,days.size);assertTrue(days.all{it.s("value")=="3600"})}finally{java.util.TimeZone.setDefault(previous)}
+    }
+    @Test fun latestSnapshotAndChangeSumArePairedByDay() {
+        val snapshot=metric();val change=metric("CHANGE","SUM")
+        actions.single("atlas.record",obj("metricId" to snapshot,"date" to "2026-11-01","occurredAt" to "2026-11-01T00:00:00Z","zone" to "UTC","value" to "60"));actions.single("atlas.record",obj("metricId" to snapshot,"date" to "2026-11-01","occurredAt" to "2026-11-01T01:00:00Z","zone" to "UTC","value" to "62"))
+        listOf("3","4").forEach{actions.single("atlas.record",obj("metricId" to change,"date" to "2026-11-01","value" to it))}
+        assertEquals("62",db.dailySeries(snapshot,"2026-11-01","2026-11-01").first().s("value"));assertEquals("7",db.dailySeries(change,"2026-11-01","2026-11-01").first().s("value"))
+    }
+    @Test fun schemaFourMigratesWithoutLosingRecords() {
+        val id=metric();actions.single("atlas.record",obj("metricId" to id,"value" to "65.5","date" to "2026-11-04"));val sql=db.writableDatabase
+        sql.execSQL("DROP TABLE atlas_versions");sql.execSQL("DROP TABLE atlas_themes");sql.execSQL("DROP TABLE atlas_appearance");sql.execSQL("DROP INDEX event_date");listOf("local_date","occurred_at","precision").forEach{sql.execSQL("ALTER TABLE atlas_events DROP COLUMN "+it)};sql.version=4;db.close();db=AtlasStore(context,"tests.db");actions=Actions(db)
+        assertEquals("65.5",db.facts(id).first().s("value"));assertEquals(7,db.readableDatabase.version);assertTrue(db.query("SELECT * FROM atlas_versions").isNotEmpty());assertEquals("lavender",ThemeRepository(db).current().s("id"))
+    }
+
 }

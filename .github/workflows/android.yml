@@ -25,7 +25,7 @@ jobs:
       - name: Test build service
         run: python3 -m unittest discover -s server/build_orchestrator -v
       - name: Build and unit test
-        run: ./gradlew :app:testStandaloneDebugUnitTest :app:assembleStandaloneDebug :app:assembleStandaloneDebugAndroidTest --stacktrace
+        run: ./gradlew :app:testStandaloneDebugUnitTest :app:assembleStandaloneDebug :app:assembleStandaloneDebugAndroidTest :app:bundlePlayRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: success()
         with:

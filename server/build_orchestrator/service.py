@@ -180,8 +180,16 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("requirements required")
             if not (AI_KEY and TOKEN):
                 return self.respond(503, {"error": "AI and GitHub credentials must be configured"})
-            job_id = uuid.uuid4().hex
+            key = self.headers.get("Idempotency-Key", "")
+            if key and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", key):
+                raise ValueError("Invalid idempotency key")
+            job_id = __import__('hashlib').sha256(key.encode()).hexdigest()[:32] if key else uuid.uuid4().hex
             with database() as db:
+                previous = db.execute("SELECT spec FROM jobs WHERE id=?", (job_id,)).fetchone()
+                if previous:
+                    if json.loads(previous["spec"]) != spec:
+                        return self.respond(409, {"error":"Idempotency key already used for different requirements"})
+                    return self.respond(200, refresh(job_id))
                 db.execute("INSERT INTO jobs(id,spec,status,detail,created_at) VALUES (?,?,'QUEUED','Queued',?)", (job_id, json.dumps(spec), int(time.time())))
             JOBS.put(job_id)
             self.respond(202, {"id": job_id, "status": "QUEUED", "detail": "Queued"})

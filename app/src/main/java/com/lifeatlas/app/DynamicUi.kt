@@ -34,6 +34,6 @@ import java.time.YearMonth
     val metric=metrics.firstOrNull{it.s("key")==key}
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
         Pick("表单预览",metrics.map{it.s("key") to it.s("title")},key){key=it;fields=emptyMap();value=""}
-        if(metric!=null){OutlinedTextField(value,{value=it},label={Text("数值 · ${metric.s("unit")}")},modifier=Modifier.fillMaxWidth());(metric.optJSONArray("fields") ?: JSONArray()).objects().forEach{f->DynamicField(f,fields[f.s("id")] ?: ""){fields=fields+(f.s("id") to it)}}
+        if(metric!=null){OutlinedTextField(value,{value=it},label={Text("数值 · ${metric.s("unit")}")},modifier=Modifier.fillMaxWidth());(metric.optJSONArray("fields") ?: JSONArray()).objects().forEach{f->DynamicField(f,fields[f.s("id")] ?: ""){fields=fields+(f.s("id") to it)}}}
     }
 }

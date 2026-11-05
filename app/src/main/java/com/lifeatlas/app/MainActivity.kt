@@ -75,6 +75,7 @@ class MainActivity:ComponentActivity() {
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit,onVoice:()->Unit) {
     val state by vm.ui.collectAsState();var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
+    var timeline by rememberSaveable{mutableStateOf(false)}
     var objectCache by remember{mutableStateOf<Map<String,JSONObject>>(emptyMap())}
     var spaceRows by remember{mutableStateOf<List<JSONObject>>(emptyList())};var spaceSearch by rememberSaveable{mutableStateOf("")};var spaceOffset by rememberSaveable{mutableIntStateOf(0)};var archived by rememberSaveable{mutableStateOf(false)}
     val objects=(state.objects+objectCache.values).distinctBy{it.s("id")}
@@ -93,7 +94,7 @@ class MainActivity:ComponentActivity() {
     LaunchedEffect(state.pending){if(state.pending!=null){page="workspace";selected=null}}
     LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}}
     AtlasBackdrop { Scaffold(
-        containerColor=Color.Transparent,
+        containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onBackground,
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
             Text("Life Atlas",style=MaterialTheme.typography.headlineSmall)
             if(page=="workspace") {
@@ -141,10 +142,11 @@ class MainActivity:ComponentActivity() {
                     if(children.isEmpty() && chosen?.s("type") !in setOf("METRIC","VIEW")) item {Text("暂无内容")}
                 }
                 "history" -> {
-                    item{Text("记录",style=MaterialTheme.typography.headlineSmall)}
+                    item{Pick("显示",listOf("records" to "记录","timeline" to "时间轴"),if(timeline)"timeline" else "records"){timeline=it=="timeline"}}
                     item{TextButton(onClick={eventDialog=true}){Text("记录文字事件")};HistoryFilter(vm,state)}
-                    items(state.events,key={"event-${it.s("id")}"}){event->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(event.s("raw_input"));Text(event.s("local_date","日期未指定"),style=MaterialTheme.typography.bodySmall)}}}
-                    items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else if(f.s("precision")=="INTERVAL") formatInstant(f.s("start_at"),f.s("zone"))+" — "+formatInstant(f.s("end_at"),f.s("zone")) else formatInstant(f.s("occurred_at"),f.s("zone")),style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
+                    if(timeline)item{TimelinePanel(vm,state,onFact={editingFact=it})}
+                    if(!timeline)items(state.events.filter{it.optInt("fact_count")==0},key={"event-${it.s("id")}"}){event->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(event.s("raw_input"));Text(event.s("local_date","日期未指定"),style=MaterialTheme.typography.bodySmall)}}}
+                    if(!timeline)items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else if(f.s("precision")=="INTERVAL") formatInstant(f.s("start_at"),f.s("zone"))+" — "+formatInstant(f.s("end_at"),f.s("zone")) else formatInstant(f.s("occurred_at"),f.s("zone")),style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
                     if(state.facts.isEmpty())item{Text("所选范围没有记录")}
                 }
                 "analytics" -> {
@@ -176,7 +178,7 @@ class MainActivity:ComponentActivity() {
     if(buildDialog)BuildRequestDialog(onDismiss={buildDialog=false},onSave={vm.action("atlas.requestBuild",it,"创建扩展任务");buildDialog=false})
     if(create) ObjectDialog(parent=selected,objects=objects,onDismiss={create=false},onSave={type,title,config->vm.action("atlas.createObject",obj("type" to type,"title" to title,"parentId" to selected,"config" to config),"创建$title");create=false})
     edit?.let{o->ManageDialog(o,objects,vm,onDismiss={edit=null})}
-    record?.let{m->RecordDialog(m,onDismiss={record=null},onSave={args->vm.action("atlas.record",args,"记录${m.s("title")}");record=null})}
+    record?.let{m->RecordDialog(m,events=state.events,onDismiss={record=null},onSave={args->vm.action("atlas.record",args,"记录${m.s("title")}");record=null})}
     editingFact?.let{f->EditFactDialog(f,metric=objects.firstOrNull{it.s("id")==f.s("metric_id")},onDismiss={editingFact=null},onSave={a->vm.action("atlas.editRecord",a,"修改记录");editingFact=null},onDelete={vm.action("atlas.deleteRecord",obj("id" to f.s("id")),"删除记录");editingFact=null})}
     if(restoreConfirm) AlertDialog(onDismissRequest={restoreConfirm=false},title={Text("恢复备份")},text={Text("选择备份后将覆盖当前数据，并自动保存覆盖前的恢复点。")},confirmButton={TextButton(onClick={restoreConfirm=false;onRestore()}){Text("选择备份")}},dismissButton={TextButton(onClick={restoreConfirm=false}){Text("取消")}})
 }

@@ -12,6 +12,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.toArgb
 import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -41,18 +43,25 @@ import java.time.YearMonth
 @Composable fun Trend(points:List<JSONObject>,unit:String,type:String="line") {
     val data=remember(points){points.mapNotNull{p->val v=p.s("value").toDoubleOrNull();val d=runCatching{LocalDate.parse(p.s("date")).toEpochDay()}.getOrNull();if(v!=null && v.isFinite() && d!=null) d to v else null}}
     if(data.isEmpty()) return
-    val density=LocalDensity.current;val textPx=with(density){11.dp.toPx()};val accent=MaterialTheme.colorScheme.primary
+    val density=LocalDensity.current;val textPx=with(density){11.sp.toPx()};val accent=MaterialTheme.colorScheme.primary;val labelColor=readableColor(MaterialTheme.colorScheme.onSurfaceVariant,LocalAtlasBackground.current).toArgb();val grid=LocalAtlasTokens.current.chartGrid
     Column {Text(if(type=="heatmap") "按日分布" else "日趋势 · $unit",style=MaterialTheme.typography.titleMedium)
         Canvas(Modifier.fillMaxWidth().height(210.dp)) {
             val left=56.dp.toPx();val top=16.dp.toPx();val right=size.width-8.dp.toPx();val bottom=size.height-38.dp.toPx();val width=right-left;val height=bottom-top
-            val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=android.graphics.Color.DKGRAY;textSize=textPx}
+            val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=labelColor;textSize=textPx}
             val minDay=data.minOf{it.first};val maxDay=data.maxOf{it.first};val dx=(maxDay-minDay).coerceAtLeast(1).toDouble()
             val min=if(type=="bar") minOf(0.0,data.minOf{it.second}) else data.minOf{it.second};val max=if(type=="bar") maxOf(0.0,data.maxOf{it.second}) else data.maxOf{it.second};val span=(max-min).takeIf{it>0} ?: 1.0
             fun x(day:Long)=left+if(maxDay==minDay) width/2 else ((day-minDay)/dx*width).toFloat()
             fun y(value:Double)=bottom-((value-min)/span*height).toFloat()
-            for(i in 0..2){val value=min+span*i/2;val yy=y(value);drawLine(Color(0xffdedbe2),Offset(left,yy),Offset(right,yy),1f);drawContext.canvas.nativeCanvas.drawText("%.3g".format(java.util.Locale.ROOT,value),0f,yy+textPx/3,paint)}
-            val labels=listOf(minDay,(minDay+maxDay)/2,maxDay).distinct();labels.forEachIndexed{i,d->val label=LocalDate.ofEpochDay(d).toString().takeLast(5);val xx=when(i){0->left;labels.lastIndex->right-paint.measureText(label);else->x(d)-paint.measureText(label)/2};drawContext.canvas.nativeCanvas.drawText(label,xx,size.height-12.dp.toPx(),paint)}
-            if(type=="heatmap") {data.forEachIndexed{i,(d,v)->val col=i%7;val row=i/7;val cw=width/7;val ch=(height/5).coerceAtMost(30.dp.toPx());drawRect(accent.copy(alpha=(0.15+0.85*(v-min)/span).toFloat()),Offset(left+col*cw,top+row*ch),Size(cw-4.dp.toPx(),ch-4.dp.toPx()))}}
+            if(type!="heatmap")for(i in 0..2){val value=min+span*i/2;val yy=y(value);drawLine(grid,Offset(left,yy),Offset(right,yy),1f);drawContext.canvas.nativeCanvas.drawText("%.3g".format(java.util.Locale.ROOT,value),0f,yy+textPx/3,paint)}
+            val labels=if(type=="heatmap")emptyList() else listOf(minDay,(minDay+maxDay)/2,maxDay).distinct();labels.forEachIndexed{i,d->val label=LocalDate.ofEpochDay(d).toString().takeLast(5);val xx=when(i){0->left;labels.lastIndex->right-paint.measureText(label);else->x(d)-paint.measureText(label)/2};drawContext.canvas.nativeCanvas.drawText(label,xx,size.height-12.dp.toPx(),paint)}
+            if(type=="heatmap") {
+                val monday=LocalDate.ofEpochDay(minDay).with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).toEpochDay()
+                val weeks=((maxDay-monday)/7+1).toInt();val cw=width/weeks.coerceAtLeast(1);val ch=height/7
+                listOf("一","二","三","四","五","六","日").forEachIndexed{i,label->drawContext.canvas.nativeCanvas.drawText(label,0f,top+(i+0.7f)*ch,paint)}
+                data.forEach{(d,v)->val day=(d-monday).toInt();drawRect(accent.copy(alpha=(0.15+0.85*(v-min)/span).toFloat()),Offset(left+day/7*cw,top+day%7*ch),Size((cw-3.dp.toPx()).coerceAtLeast(1f),(ch-3.dp.toPx()).coerceAtLeast(1f)))}
+                val label=LocalDate.ofEpochDay(minDay).toString()+" — "+LocalDate.ofEpochDay(maxDay)
+                drawContext.canvas.nativeCanvas.drawText(label,left,size.height-10.dp.toPx(),paint)
+            }
             else if(type=="bar")data.forEach{(d,v)->val zero=y(0.0);val yy=y(v);val bar=(width/(data.size*1.8)).toFloat().coerceAtMost(20.dp.toPx());drawRect(accent,Offset(x(d)-bar/2,minOf(zero,yy)),Size(bar,kotlin.math.abs(yy-zero).coerceAtLeast(2f)))}
             else {data.zipWithNext().forEach{(a,b)->drawLine(accent,Offset(x(a.first),y(a.second)),Offset(x(b.first),y(b.second)),2.dp.toPx())};data.forEach{drawCircle(accent,3.dp.toPx(),Offset(x(it.first),y(it.second)))}}
         }

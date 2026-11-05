@@ -41,6 +41,8 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         themeSchema(db)
     }
     private fun themeSchema(db:SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS fact_interval ON atlas_facts(metric_id,deleted,start_at,end_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS event_date ON atlas_events(local_date,id)")
         db.execSQL("CREATE TABLE atlas_themes(id TEXT PRIMARY KEY,title TEXT NOT NULL,config TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)")
         db.execSQL("CREATE TABLE atlas_appearance(id TEXT PRIMARY KEY,theme_id TEXT NOT NULL,mode TEXT NOT NULL,compact INTEGER NOT NULL DEFAULT 0)")
     }
@@ -123,12 +125,13 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         val lower=LocalDate.parse(from).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val upper=LocalDate.parse(to).plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val union=method=="UNION_DURATION"
-        val where=if(union) "start_at IS NOT NULL AND end_at IS NOT NULL AND start_at<? AND end_at>?" else "local_date BETWEEN ? AND ?"
-        val args=if(union) arrayOf(metric,Instant.ofEpochMilli(upper).toString(),Instant.ofEpochMilli(lower).toString()) else arrayOf(metric,from,to)
+        val splitTime=metricConfig.s("kind")=="ALLOCATION" && metricConfig.s("role")!="sleep"
+        val where=if(union) "start_at IS NOT NULL AND end_at IS NOT NULL AND start_at<? AND end_at>?" else if(splitTime) "(local_date BETWEEN ? AND ? OR (start_at IS NOT NULL AND start_at<? AND end_at>?))" else "local_date BETWEEN ? AND ?"
+        val args=if(union) arrayOf(metric,Instant.ofEpochMilli(upper).toString(),Instant.ofEpochMilli(lower).toString()) else if(splitTime)arrayOf(metric,from,to,Instant.ofEpochMilli(upper).toString(),Instant.ofEpochMilli(lower).toString()) else arrayOf(metric,from,to)
         readableDatabase.rawQuery("SELECT value,fields_json,start_at,end_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND $where ORDER BY local_date,occurred_at,created_at,id",args).use {c->while(c.moveToNext()) {
             val fields=JSONObject(c.getString(1));if(metricConfig.s("role") in setOf("income","expense") && fields.s("flow")=="transfer") continue
             recordCount++
-            if(!c.isNull(0)) {val v=normalizedValue(decimal(c.getString(0)),fields,metricConfig);count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
+            if(!c.isNull(0)) {var v=normalizedValue(decimal(c.getString(0)),fields,metricConfig);if(splitTime && !c.isNull(2) && !c.isNull(3)){val a=maxOf(Instant.parse(c.getString(2)),Instant.ofEpochMilli(lower));val b=minOf(Instant.parse(c.getString(3)),Instant.ofEpochMilli(upper));if(b<=a)continue;v=Units.convert(secondsBetween(a,b),"s",metricConfig.s("unit"))};count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
                 if(method=="WEIGHTED_MEAN") {val w=JSONObject(c.getString(1)).s("weight").takeIf{it.isNotEmpty()}?.let(::decimal);if(w!=null){require(w>=BigDecimal.ZERO);weighted+=v*w;weights+=w;weightedCount++}}
             }
             if(method=="UNION_DURATION" && !c.isNull(2) && !c.isNull(3)) intervals.add(maxOf(lower,Instant.parse(c.getString(2)).toEpochMilli()) to minOf(upper,Instant.parse(c.getString(3)).toEpochMilli()))
