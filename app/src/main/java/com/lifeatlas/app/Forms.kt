@@ -23,7 +23,7 @@ import java.time.LocalDate
         Pick("类型",listOf("WORKSPACE","FOLDER","PROJECT","METRIC","DASHBOARD").map{it to typeName(it)},type){type=it}
         OutlinedTextField(name,{name=it},label={Text("名称")},modifier=Modifier.fillMaxWidth())
         if(type=="METRIC") {
-            Pick("数据语义",kinds.map{it to kindName(it)},kind){kind=it;if(it=="ALLOCATION" && !Units.isTime(unit))unit="分钟";aggregate=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
+            Pick("记录方式",kinds.map{it to kindName(it)},kind){kind=it;if(it=="ALLOCATION" && !Units.isTime(unit))unit="分钟";aggregate=if(it=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM"}
             OutlinedTextField(unit,{unit=it},label={Text("单位，如 kg、页、分钟")},modifier=Modifier.fillMaxWidth())
             Pick("统计方式",aggregateMethods.map{it to methodName(it)},aggregate){aggregate=it}
             Pick("专业规则",listOf("" to "通用指标","income" to "收入（正值）","expense" to "支出（负值）","balance" to "账户余额快照","accountChange" to "账户流水","sleep" to "睡眠时长"),role){role=it;when(it){"balance"->{kind="SNAPSHOT";aggregate="LAST_SNAPSHOT";unit="CNY"};"income","expense","accountChange"->{kind="CHANGE";aggregate="SUM";unit="CNY"};"sleep"->{kind="ALLOCATION";aggregate="SUM";unit="小时"}}}

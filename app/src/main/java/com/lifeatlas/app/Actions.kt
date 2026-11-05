@@ -91,14 +91,15 @@ class Actions(val store:AtlasStore) {
                     }
                 }catch(e:Exception){return obj("status" to "PARTIAL","steps" to JSONObject(refs.mapValues{it.value}),"failedStep" to id,"message" to "已完成 ${refs.size} 项；${e.message}","retryPlan" to plan)}
             }
-            return store.transact(plan.s("title","执行操作"),request){obj("status" to "DONE","steps" to JSONObject(refs.mapValues{it.value}),"message" to "已完成 ${refs.size} 项操作")}
+            return store.transact(plan.s("title","执行操作"),request){obj("status" to "DONE","steps" to JSONObject(refs.mapValues{it.value}),"message" to completionMessage(steps,refs.size))}
         }
         return store.transact(plan.s("title","执行操作"),request) {
             steps.objects().forEachIndexed {i,step->val id=step.s("stepId","s$i");require(id !in refs) {"重复步骤"};val args=resolve(step.optJSONObject("args") ?: JSONObject(),refs) as JSONObject;refs[id]=dispatch(step.getString("actionId"),args,plan.s("rawInput"))}
-            obj("status" to "DONE","steps" to JSONObject(refs.mapValues{it.value}),"message" to "已完成 ${refs.size} 项操作")
+            obj("status" to "DONE","steps" to JSONObject(refs.mapValues{it.value}),"message" to completionMessage(steps,refs.size))
         }
     }
 
+    private fun completionMessage(steps:JSONArray,count:Int):String {val records=steps.objects().count{it.s("actionId")=="atlas.record"};return if(records>0)"已保存 $records 条记录" else "已完成 $count 项操作"}
     private fun resolve(value:Any,refs:Map<String,JSONObject>,deferRecord:Boolean=false):Any = when(value) {
         is JSONObject->if(value.has("\$ref")) {
             val path=value.getString("\$ref").split('.')
@@ -249,7 +250,7 @@ class Actions(val store:AtlasStore) {
         val metric=a.getString("metricId");val owner=store.one("atlas_objects",metric) ?: error("指标不存在");require(owner.s("type")=="METRIC" && owner.optInt("archived")==0)
         val plugin=owner.s("plugin_id");if(plugin.isNotEmpty()) require(store.query("SELECT id FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE'",arrayOf(plugin)).isNotEmpty()) {"请先启用插件"}
         val c=JSONObject(owner.s("config"));val kind=c.getString("kind");val date=a.s("date",LocalDate.now().toString());LocalDate.parse(date)
-        val fields=(a.optJSONObject("fields") ?: JSONObject()).copyJson();fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",owner.optLong("revision",1));val defs=c.optJSONArray("fields") ?: JSONArray()
+        val fields=(a.optJSONObject("fields") ?: JSONObject()).copyJson();if(a.s("sourceExcerpt").isNotBlank())fields.put("_sourceExcerpt",a.s("sourceExcerpt").take(4000));fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",owner.optLong("revision",1));val defs=c.optJSONArray("fields") ?: JSONArray()
         validateFields(c,fields,a.optBoolean("allowIncomplete"));if(a.optBoolean("allowIncomplete"))fields.put("_incomplete",true)
         var value=a.s("value").ifEmpty{null}?.let(::decimal)
         if(value!=null && a.s("unit").isNotEmpty()) value=Units.convert(value,a.s("unit"),c.s("unit"))

@@ -19,7 +19,7 @@ data class AtlasState(
     val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val themeConfig:String=ThemeDefaults.config().toString(),val themeId:String="lavender",val objects:List<JSONObject> = emptyList(),val facts:List<JSONObject> = emptyList(),
     val operations:List<JSONObject> = emptyList(),val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
     val historyMetric:String="",val historyFrom:String=java.time.YearMonth.now().atDay(1).toString(),val historyTo:String=LocalDate.now().toString(),val historyOffset:Int=0,val events:List<JSONObject> = emptyList(),val builds:List<JSONObject> = emptyList(),val layouts:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
-    val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null
+    val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val error:String=""
 )
 class AtlasModel(app:Application):AndroidViewModel(app) {
     val store=AtlasStore(app);val settings=Settings(app);val actions=Actions(store);val planner=Planner(actions)
@@ -37,34 +37,54 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,facts=store.facts(historyMetric,historyFrom,historyTo,historyOffset),events=store.query("SELECT e.*,(SELECT COUNT(*) FROM atlas_facts f WHERE f.event_id=e.id AND f.deleted=0) fact_count FROM atlas_events e WHERE (e.local_date BETWEEN ? AND ? OR e.local_date IS NULL) ORDER BY e.local_date DESC,e.created_at DESC LIMIT 50 OFFSET ?",arrayOf(historyFrom,historyTo,historyOffset.toString())),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
         commandMutex.withLock {
-        update{it.copy(busy=true,status=title)}
-        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成"))};load()} catch(e:Exception){update{it.copy(status=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
+        update{it.copy(busy=true,status=title,error="")}
+        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成"))};load()} catch(e:Exception){update{it.copy(status="操作失败："+(e.message ?: "请重试"),error=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
         }
     }
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}
-    fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在执行"){actions.execute(plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)},confirmed)}
+    fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在保存"){
+        val result=actions.execute(plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)},confirmed)
+        if(result.s("status")=="DONE" && plan.optBoolean("imageImport")){update{it.copy(image=null,imageText="")};saveDraft("")}
+        result
+    }
+    private fun planInput(input:String,source:String="",importOnly:Boolean=false):JSONObject {
+        val context=obj("appearance" to ThemeRepository(store).appearance(),"currentTheme" to ThemeRepository(store).current(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
+        if(source.isNotBlank())context.put("imageText",source).put("imageImport",importOnly)
+        var attempt=0
+        while(true) {
+            val plan=planner.plan(settings.ai(),input,context)
+            if(plan.has("question"))return obj("message" to plan.getString("question"),"question" to plan)
+            if(source.isNotBlank()) {
+                try {if(importOnly)PlanReview.validateImageImport(plan,source)}catch(e:Exception){if(++attempt>2)throw e;context.put("planError",e.message).put("rejectedPlan",plan);continue}
+                // Images always receive a review. Selecting an image never writes life data.
+                return obj("status" to "PREVIEW","plan" to plan.put("imageImport",true),"message" to "识别完成，请核对后保存")
+            }
+            try{update{it.copy(status="正在执行")};return actions.execute(plan)}catch(missing:CapabilityMissing){require(++attempt<=2){"能力生成仍需补充信息，输入已保存"};context.put("missingAction",missing.action).put("instruction","通过现有通用操作、声明式插件或原生构建实现缺失能力")}
+        }
+    }
     fun submit(input:String) {
         saveDraft(input)
         work("正在理解需求") {
-            if(input.trim().startsWith("{")) return@work actions.execute(JSONObject(input))
+            if(input.trim().startsWith("{"))return@work actions.execute(JSONObject(input))
             Offline.plan(input,store)?.let{return@work actions.execute(it)}
-            val context=obj("appearance" to ThemeRepository(store).appearance(),"currentTheme" to ThemeRepository(store).current(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""))
-            var plan=planner.plan(settings.ai(),input,context,state.value.image)
-            var attempt=0
-            while(true) {
-                if(plan.has("question"))return@work obj("message" to plan.getString("question"),"question" to plan)
-                try{update{it.copy(status="正在执行")};return@work actions.execute(plan)}catch(missing:CapabilityMissing){require(++attempt<=2){"能力生成仍需补充信息，输入已保存"};context.put("missingAction",missing.action);context.put("instruction","通过现有通用操作、声明式插件或原生构建实现缺失能力");plan=planner.plan(settings.ai(),input,context,state.value.image)}
-            }
-            @Suppress("UNREACHABLE_CODE") obj("message" to "已处理")
+            val text=state.value.imageText
+            require(state.value.image==null || text.isNotBlank()){"图片未识别出文字，请换一张清晰图片"}
+            planInput(input.ifBlank{"整理图片中的记录供我确认"},text,text.isNotBlank())
         }
     }
     fun clearPending() {update{it.copy(pending=null)}}
     fun undo(redo:Boolean=false)=work(if(redo) "正在恢复" else "正在撤销") {obj("message" to ((if(redo) "已恢复：" else "已撤销：")+store.undo(redo)))}
-    fun addImage(uri:Uri)=work("正在读取图片") {
+    fun addImage(uri:Uri)=work("正在识别图片") {
         val resolver=getApplication<Application>().contentResolver;val mime=resolver.getType(uri) ?: "image/jpeg";require(mime.startsWith("image/")){"请选择图片"}
-        val bytes=resolver.openInputStream(uri)!!.use{input->val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(65536);while(true){val n=input.read(buffer);if(n<0)break;require(out.size()+n<=4_000_000){"图片需小于4MB"};out.write(buffer,0,n)};out.toByteArray()};require(bytes.size<=4_000_000){"图片需小于4MB"};update{it.copy(image="data:$mime;base64,"+Base64.encodeToString(bytes,Base64.NO_WRAP))};obj("message" to "图片已附加，描述需要识别或执行的内容")
+        update{it.copy(image=uri.toString(),imageText="",pending=null,result=null)}
+        val text=ImageText.read(getApplication(),uri)
+        require(text.isNotBlank()){"未识别到清晰文字，请更换图片"}
+        update{it.copy(imageText=text,status="正在整理图片记录")}
+        if(settings.ai().key.isBlank())return@work obj("message" to "文字已识别，请配置 AI 后整理记录")
+        planInput(draft.ifBlank{"识别图片中的实际记录，列出数值与发生日期，供我核对保存"},text,true)
     }
-    fun clearImage(){update{it.copy(image=null)}}
+    fun editImageText(text:String){update{it.copy(imageText=text)}}
+    fun clearImage(){update{it.copy(image=null,imageText="",pending=null,error="",status="图片已移除")}}
     fun export(uri:Uri,csv:Boolean=false)=work("正在导出") {getApplication<Application>().contentResolver.openOutputStream(uri)!!.bufferedWriter().use{if(csv) store.exportCsv(it) else store.export(it)};obj("message" to "导出完成")}
     fun restore(uri:Uri)=work("正在恢复备份") {getApplication<Application>().contentResolver.openInputStream(uri)!!.bufferedReader().use(store::import);obj("message" to "恢复完成，覆盖前的数据已保存为恢复点")}
     fun importCsv(uri:Uri,metric:String?,valueColumn:String,dateColumn:String)=work("正在导入 CSV") {

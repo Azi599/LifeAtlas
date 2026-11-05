@@ -3,7 +3,6 @@ package com.lifeatlas.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
@@ -47,7 +46,6 @@ class MainActivity:ComponentActivity() {
     private val restore=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.restore(it)}}
     private val plugin=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.importPlugin(it)}}
     private val image=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.addImage(it)}}
-    private val speech=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){r->r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let{vm.saveDraft(it);vm.submit(it)}}
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -77,12 +75,7 @@ class MainActivity:ComponentActivity() {
                     onErrors={errorExport=true;export.launch("LifeAtlas-import-errors.csv")},
                     onRestore={restore.launch(arrayOf("*/*"))},
                     onPlugin={plugin.launch(arrayOf("application/json","text/plain","*/*"))},
-                    onImage={image.launch(arrayOf("image/*"))},
-                    onVoice={
-                        val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-CN")
-                        if(intent.resolveActivity(packageManager)!=null) speech.launch(intent)
-                        else vm.work("语音输入"){obj("message" to "请点击输入法的麦克风进行语音输入")}
-                    }
+                    onImage={image.launch(arrayOf("image/*"))}
                 )
                 csvUri?.let{uri->val state by vm.ui.collectAsState();CsvImportDialog(state.objects,onDismiss={csvUri=null},onImport={metric,value,date->vm.importCsv(uri,metric,value,date);csvUri=null})}
             }
@@ -90,13 +83,16 @@ class MainActivity:ComponentActivity() {
     }
 }
 
-@Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit,onVoice:()->Unit) {
+@Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit) {
     val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
+    var showImageText by remember{mutableStateOf(false)}
     var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
+    LaunchedEffect(state.image,state.status){if(state.image==null && vm.draft.isBlank() && state.status.startsWith("已保存"))command=""}
     val listState=rememberLazyListState()
     LaunchedEffect(page,selected){listState.scrollToItem(0)}
     val scope=rememberCoroutineScope()
     fun editById(id:String){scope.launch {val row=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.query("SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE f.id=?",arrayOf(id)).firstOrNull()?.also{f->f.put("value",resolvedRecordValue(f.s("value").takeIf{it.isNotEmpty()}?.let(::decimal),JSONObject(f.s("fields_json")),vm.store.config(f.s("metric_id")))?.toPlainString() ?: JSONObject.NULL)}};editingFact=row}}
+    var pageBuilder by remember{mutableStateOf(false)};var editingPage by remember{mutableStateOf<JSONObject?>(null)}
     var timeline by rememberSaveable{mutableStateOf(false)}
     var objectCache by remember{mutableStateOf<Map<String,JSONObject>>(emptyMap())}
     var spaceRows by remember{mutableStateOf<List<JSONObject>>(emptyList())};var spaceSearch by rememberSaveable{mutableStateOf("")};var spaceOffset by rememberSaveable{mutableIntStateOf(0)};var archived by rememberSaveable{mutableStateOf(false)}
@@ -114,6 +110,7 @@ class MainActivity:ComponentActivity() {
     fun open(id:String) {selected=id;spaceOffset=0;spaceSearch="";page="spaces";vm.settings.prefs.edit().putString("selected",id).apply()}
     BackHandler(enabled=selected!=null || page!="workspace") {if(selected!=null) selected=chosen?.s("parent_id")?.ifEmpty{null} else page="workspace"}
     LaunchedEffect(state.pending){if(state.pending!=null){page="workspace";selected=null}}
+    LaunchedEffect(state.busy,state.result) {if(!state.busy && state.result!=null && page=="workspace")listState.animateScrollToItem(0)}
     LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}}
     AtlasBackdrop { Scaffold(
         containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onBackground,
@@ -123,9 +120,14 @@ class MainActivity:ComponentActivity() {
         }},
         bottomBar={Column(Modifier.imePadding()) {
             if(page=="workspace") Surface(Modifier.fillMaxWidth()) {Column(Modifier.padding(horizontal=18.dp,vertical=8.dp)) {
-                OutlinedTextField(command,{command=it;vm.saveDraft(it)},modifier=Modifier.fillMaxWidth().padding(top=10.dp),label={Text("输入")},minLines=1,maxLines=4)
-                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {Button(enabled=!state.busy && command.isNotBlank(),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "执行")};TextButton(onClick=onVoice){Text("语音")};TextButton(onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}}
-                if(state.image!=null) TextButton(onClick=vm::clearImage){Text("移除图片")}
+                if(state.status.isNotBlank()) Text(state.status,style=MaterialTheme.typography.bodySmall,color=if(state.error.isNotBlank())MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(bottom=4.dp).testTag("command-status"))
+                OutlinedTextField(command,{command=it;vm.saveDraft(it)},modifier=Modifier.fillMaxWidth(),label={Text("输入")},minLines=1,maxLines=3)
+                Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                    TextButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "换图")}
+                    if(state.image!=null)TextButton(enabled=!state.busy,onClick=vm::clearImage){Text("移除")}
+                    Spacer(Modifier.weight(1f))
+                    Button(modifier=Modifier.testTag("command-send"),enabled=!state.busy && (command.isNotBlank() || state.imageText.isNotBlank()),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "发送")}
+                }
             }}
             if(!keyboard)NavigationBar(containerColor=MaterialTheme.colorScheme.surface) {listOf("workspace" to "首页","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "我的").forEachIndexed{i,(id,title)->NavigationBarItem(colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=page==id,onClick={page=id;selected=null},icon={NavGlyph(i,page==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}
         }}
@@ -134,8 +136,9 @@ class MainActivity:ComponentActivity() {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
             when(page) {
                 "workspace" -> {
-                    item {Row {TextButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")};TextButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")};TextButton(onClick={create=true}){Text("手动创建")}}}
-                    state.pending?.let {pending->item {PlanPreview(pending,onConfirm={vm.execute(it,true)},onCancel=vm::clearPending)}}
+                    item {Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {TextButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")};TextButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")};TextButton(onClick={create=true}){Text("手动创建")}}}
+                    if(state.imageText.isNotBlank())item {Column {TextButton(onClick={showImageText=!showImageText}){Text(if(showImageText)"收起原文" else "识别原文")};if(showImageText)OutlinedTextField(state.imageText,vm::editImageText,label={Text("图片文字")},modifier=Modifier.fillMaxWidth(),minLines=3)}}
+                    state.pending?.let {pending->item {PlanPreview(pending,objects=objects,busy=state.busy,error=state.error,onConfirm={vm.execute(it,true)},onCancel=vm::clearPending)}}
                     state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                     item {Text("我的空间",style=MaterialTheme.typography.titleLarge)}
                     val layouts=state.layouts.associateBy{it.s("object_id")}
@@ -150,13 +153,14 @@ class MainActivity:ComponentActivity() {
                 "spaces" -> {
                     if(chosen?.s("type") !in setOf("METRIC","VIEW"))item{Text(chosen?.s("title") ?: "我的空间",style=MaterialTheme.typography.headlineSmall)}
                     item{Row{if(selected!=null) TextButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")};TextButton(onClick={create=true}){Text("新建")};if(chosen!=null) TextButton(onClick={edit=chosen}){Text("管理")}}}
+                    item{TextButton(onClick={editingPage=null;pageBuilder=true}){Text("新建页面")};if(chosen?.s("type")=="VIEW" && JSONObject(chosen.s("config")).s("component")=="schema")TextButton(onClick={editingPage=chosen;pageBuilder=true}){Text("编辑页面")}}
                     if(chosen?.s("type")=="METRIC") {
                         item{MetricPanel(chosen,vm,state.revision,onRecord={record=chosen})}
                     } else if(chosen?.s("type")=="VIEW") {
                         val c=JSONObject(chosen.s("config"))
                         if(c.s("component")=="chart") item{val metric=resolvedObject(c.s("metricId"),state,vm);if(metric!=null)MetricPanel(metric,vm,state.revision,onRecord={record=metric},chartType=c.s("chart","line"))}
                         else if(c.s("component")=="report") item{ReportPanel(c,state,vm)}
-                        else if(c.s("component")=="schema") item{DynamicScreen(c,state,vm,onRecord={record=it},onOpen={open(it)})}
+                        else if(c.s("component")=="schema") item{DynamicScreen(c,state,vm,onRecord={record=it},onOpen={open(it)},onFact={editingFact=it})}
                     }
                     item{OutlinedTextField(spaceSearch,{spaceSearch=it;spaceOffset=0},label={Text("搜索对象")},modifier=Modifier.fillMaxWidth());Row{Checkbox(archived,{archived=it;spaceOffset=0});Text("归档",Modifier.padding(top=12.dp))}}
                     val children=spaceRows
@@ -202,6 +206,7 @@ class MainActivity:ComponentActivity() {
     if(pluginWizard) PluginWizard(onDismiss={pluginWizard=false},onPreview={vm.action("atlas.installPlugin",obj("manifest" to it),"预览${it.s("title")}");pluginWizard=false})
     if(workflowDialog)WorkflowDialog(objects,onDismiss={workflowDialog=false},onSave={title,spec->vm.action("atlas.workflow",obj("title" to title,"spec" to spec),"创建工作流");workflowDialog=false})
     if(buildDialog)BuildRequestDialog(onDismiss={buildDialog=false},onSave={vm.action("atlas.requestBuild",it,"创建扩展任务");buildDialog=false})
+    if(pageBuilder)PageBuilderDialog(vm,selected,editingPage,onDismiss={pageBuilder=false},onSave={title,components->val existing=editingPage;if(existing==null)vm.action("atlas.createView",obj("title" to title,"parentId" to selected,"components" to components),"创建页面")else vm.action("atlas.updateObject",obj("id" to existing.s("id"),"title" to title,"config" to obj("component" to "schema","components" to components)),"修改页面");pageBuilder=false})
     if(create) ObjectDialog(parent=selected,objects=objects,onDismiss={create=false},onSave={type,title,config->vm.action("atlas.createObject",obj("type" to type,"title" to title,"parentId" to selected,"config" to config),"创建$title");create=false})
     edit?.let{o->ManageDialog(o,objects,vm,onDismiss={edit=null})}
     record?.let{m->RecordDialog(m,events=state.events,onDismiss={record=null},onSave={args->vm.action("atlas.record",args,"记录${m.s("title")}");record=null})}
@@ -224,23 +229,7 @@ class MainActivity:ComponentActivity() {
     }
 }
 fun typeName(s:String)=mapOf("WORKSPACE" to "工作空间","FOLDER" to "目录","PROJECT" to "项目","METRIC" to "指标","VIEW" to "页面","DASHBOARD" to "仪表盘","WORKFLOW" to "工作流")[s] ?: s
-fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变化","ALLOCATION" to "时间分配")[s] ?: s
-@Composable fun PlanPreview(plan:JSONObject,onConfirm:(JSONObject)->Unit,onCancel:()->Unit) {
-    var historyMode by rememberSaveable(plan.toString()){mutableStateOf("")}
-    val needsHistory=(plan.optJSONArray("impact") ?: JSONArray()).objects().any{it.optBoolean("expressionChanged") && it.optLong("count")>0}
-
-    Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        Text(plan.s("question",plan.s("title","操作预览")),style=MaterialTheme.typography.titleMedium)
-        if(plan.has("question")) (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan"))}){Text(choice.s("title"))}}
-        else {
-            (plan.optJSONArray("steps") ?: JSONArray()).objects().forEach{step->val a=step.optJSONObject("args") ?: JSONObject();val m=a.optJSONObject("manifest");Text(if(m!=null) "创建功能：${m.s("title")}" else "${actionName(step.s("actionId"))} ${a.s("title")}");if(m!=null){(m.optJSONArray("metrics") ?: JSONArray()).objects().forEach{Text("${it.s("title")} · ${kindName(it.s("kind"))} · ${it.s("unit")}")};FeaturePreview(m)}}
-            (plan.optJSONArray("impact") ?: JSONArray()).objects().forEach{impact->Text(impact.s("title")+" · "+impact.optLong("count")+" 条记录");if(impact.s("oldUnit")!=impact.s("newUnit"))Text(impact.s("oldUnit")+" → "+impact.s("newUnit")+" × "+impact.s("factor"))}
-            if(needsHistory)Pick("历史记录",listOf("recalculate" to "按新规则重算","preserve" to "保留原计算结果"),historyMode){historyMode=it}
-            Button(enabled=!needsHistory || historyMode.isNotBlank(),onClick={val confirmed=plan.copyJson();if(historyMode.isNotBlank())(confirmed.optJSONArray("steps") ?: JSONArray()).objects().forEach{it.optJSONObject("args")?.optJSONObject("manifest")?.put("historyMode",historyMode)};onConfirm(confirmed)}){Text("确认执行")}
-        }
-        TextButton(onClick=onCancel){Text("取消")}
-    }}
-}
+fun kindName(s:String)=mapOf("SNAPSHOT" to "逐次测量","CHANGE" to "逐笔累计","ALLOCATION" to "计时")[s] ?: s
 @Composable fun TimerCard(timer:JSONObject,objects:List<JSONObject>,vm:AtlasModel) {
     var seconds by remember{mutableLongStateOf(0)}
     LaunchedEffect(timer.toString()){while(true){val periods=JSONArray(timer.s("periods")).objects();seconds=periods.sumOf{Duration.between(Instant.parse(it.s("start")),Instant.parse(it.s("end"))).seconds}+(if(timer.s("running_at").isNotEmpty()) if(!timer.isNull("elapsed_start") && timer.optInt("boot_count",-1)==android.provider.Settings.Global.getInt(vm.store.appContext.contentResolver,"boot_count",0)) ((android.os.SystemClock.elapsedRealtime()-timer.getLong("elapsed_start"))/1000).coerceAtLeast(0) else Duration.between(Instant.parse(timer.s("running_at")),Instant.now()).seconds.coerceAtLeast(0) else 0);kotlinx.coroutines.delay(1000)}}

@@ -20,6 +20,6 @@ fi
 if [ "$api_level" = "35" ]; then
     ./gradlew :app:connectedStandaloneDebugAndroidTest --stacktrace
 else
-    ./gradlew :app:connectedStandaloneDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.lifeatlas.app.UiTest,com.lifeatlas.app.ThemeTest --stacktrace
+    ./gradlew :app:connectedStandaloneDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.lifeatlas.app.UiTest,com.lifeatlas.app.ThemeTest,com.lifeatlas.app.CaptureTest --stacktrace
 fi
 bash scripts/screenshots.sh

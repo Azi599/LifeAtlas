@@ -32,7 +32,7 @@ import java.time.YearMonth
         }while(live)
     }
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Text(metric.s("title"),style=MaterialTheme.typography.titleLarge);Text("${kindName(config.s("kind"))} · ${config.s("unit")}")
+        Text(metric.s("title"),style=MaterialTheme.typography.titleLarge);if(config.s("unit").isNotBlank())Text(config.s("unit"))
         Button(onClick=onRecord){Text("新增记录")}
         if(config.s("kind")=="ALLOCATION")OutlinedButton(onClick={vm.action("time.start",obj("metricId" to metric.s("id")),"开始${metric.s("title")}计时")}){Text("开始计时")}
         OutlinedTextField(month,{month=it},label={Text("分析月份 YYYY-MM")},modifier=Modifier.fillMaxWidth());TextButton(onClick={request++}){Text("查看月份")}

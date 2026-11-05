@@ -11,8 +11,8 @@ android {
         minSdk = 31
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = 36
-        versionCode = providers.gradleProperty("atlasVersionCode").orElse("2").get().toInt()
-        versionName = "0.2.0-dev"
+        versionCode = providers.gradleProperty("atlasVersionCode").orElse("3").get().toInt()
+        versionName = "0.3.0-test"
     }
     flavorDimensions += "distribution"
     productFlavors {
@@ -24,6 +24,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     testImplementation("junit:junit:4.13.2")

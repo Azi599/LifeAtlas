@@ -57,7 +57,7 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
     androidx.compose.material3.OutlinedButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.outlinedButtonColors(contentColor=if(LocalAtlasBackground.current==MaterialTheme.colorScheme.background)MaterialTheme.colorScheme.onBackground else readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
 }
 @Composable fun TextButton(onClick:()->Unit,modifier:Modifier=Modifier,enabled:Boolean=true,contentPadding:PaddingValues=PaddingValues(horizontal=12.dp,vertical=10.dp),content:@Composable RowScope.()->Unit) {
-    androidx.compose.material3.TextButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.textButtonColors(contentColor=if(LocalAtlasBackground.current==MaterialTheme.colorScheme.background)MaterialTheme.colorScheme.onBackground else readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
+    androidx.compose.material3.OutlinedButton(onClick,modifier.heightIn(min=48.dp),enabled=enabled,shape=MaterialTheme.shapes.small,colors=ButtonDefaults.outlinedButtonColors(contentColor=if(LocalAtlasBackground.current==MaterialTheme.colorScheme.background)MaterialTheme.colorScheme.onBackground else readableColor(MaterialTheme.colorScheme.primary,LocalAtlasBackground.current)),contentPadding=contentPadding,content=content)
 }
 @Composable fun NavGlyph(index:Int,selected:Boolean) {
     val color=if(selected)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
