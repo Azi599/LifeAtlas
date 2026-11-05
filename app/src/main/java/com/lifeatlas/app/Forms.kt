@@ -76,3 +76,15 @@ import java.time.LocalDate
     if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("删除这条记录？")},text={Text("可从操作历史撤销。")},confirmButton={TextButton(onClick=onDelete){Text("删除")}},dismissButton={TextButton(onClick={confirmDelete=false}){Text("取消")}})
 }
 fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_MEAN" to "加权平均","LAST_SNAPSHOT" to "最新快照","UNION_DURATION" to "时段并集","MEDIAN" to "中位数","MIN" to "最小值","MAX" to "最大值","COUNT" to "样本数")[s] ?: s
+
+@Composable fun CsvImportDialog(objects:List<JSONObject>,onDismiss:()->Unit,onImport:(String?,String,String)->Unit) {
+    var metric by remember{mutableStateOf("")};var value by remember{mutableStateOf("value")};var date by remember{mutableStateOf("local_date")}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("导入 CSV")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+        Pick("目标指标",listOf("" to "使用文件中的 metric_id")+objects.filter{it.s("type")=="METRIC"}.map{it.s("id") to it.s("title")},metric){metric=it};OutlinedTextField(value,{value=it},label={Text("数值列名")},modifier=Modifier.fillMaxWidth());OutlinedTextField(date,{date=it},label={Text("日期列名")},modifier=Modifier.fillMaxWidth())
+    }},confirmButton={TextButton(enabled=value.isNotBlank() && date.isNotBlank(),onClick={onImport(metric.ifEmpty{null},value,date)}){Text("导入")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+}
+
+@Composable fun TextEventDialog(onDismiss:()->Unit,onSave:(String)->Unit) {
+    var text by remember{mutableStateOf("")}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("记录事件")},text={OutlinedTextField(text,{text=it},label={Text("内容")},modifier=Modifier.fillMaxWidth(),minLines=3)},confirmButton={TextButton(enabled=text.isNotBlank(),onClick={onSave(text)}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+}

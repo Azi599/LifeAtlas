@@ -74,3 +74,14 @@ fun normalizedValue(raw:BigDecimal,fields:JSONObject,config:JSONObject):BigDecim
     (config.optJSONArray("conversions") ?: JSONArray()).objects().filter{it.optInt("version")>revision}.forEach{result*=decimal(it.getString("factor"))}
     return result
 }
+
+object Units {
+    private val definitions=mapOf(
+        "kg" to ("mass" to "1000"),"千克" to ("mass" to "1000"),"g" to ("mass" to "1"),"克" to ("mass" to "1"),"mg" to ("mass" to "0.001"),
+        "L" to ("volume" to "1000"),"升" to ("volume" to "1000"),"ml" to ("volume" to "1"),"毫升" to ("volume" to "1"),
+        "h" to ("time" to "3600"),"小时" to ("time" to "3600"),"min" to ("time" to "60"),"分钟" to ("time" to "60"),"s" to ("time" to "1"),"秒" to ("time" to "1"),
+        "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
+    )
+    fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};return value.multiply(f.second.toBigDecimal()).divide(t.second.toBigDecimal(),MathContext.DECIMAL128)}
+    fun currency(unit:String)=definitions[unit]?.first?.takeIf{it=="CNY"} ?: unit
+}

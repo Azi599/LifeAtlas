@@ -6,6 +6,8 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.*
 class MathEngineTest {
+    @Test fun csvQuotedFieldsAndNewlines(){val rows=CsvCodec.rows(java.io.StringReader("a,b\n\"x,y\",\"hello\nworld\"\n")).toList();assertEquals(listOf("x,y","hello\nworld"),rows[1])}
+    @Test fun unitConversionPreservesDecimal(){assertEquals(0,Units.convert(BigDecimal("1.25"),"kg","g").compareTo(BigDecimal("1250")))}
     @Test fun expenseSignRegression(){assertEquals(BigDecimal("-25.80"),MathEngine.cashflow(BigDecimal.ZERO,BigDecimal("25.80")))}
     @Test fun weightedMeanUsesWeights(){assertEquals(0,MathEngine.weighted(listOf(BigDecimal("10") to BigDecimal("1"),BigDecimal("20") to BigDecimal("3")))!!.compareTo(BigDecimal("17.5")))}
     @Test fun medianKeepsDistribution(){assertEquals(0,MathEngine.median(listOf(BigDecimal("1"),BigDecimal("2"),BigDecimal("100"),BigDecimal("3")))!!.compareTo(BigDecimal("2.5")))}

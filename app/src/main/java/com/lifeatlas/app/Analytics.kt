@@ -58,10 +58,13 @@ import java.time.YearMonth
 }
 @Composable fun Analytics(vm:AtlasModel,state:AtlasState) {
     var metricId by remember{mutableStateOf("")};val metrics=state.objects.filter{it.s("type")=="METRIC"}
-    var cash by remember{mutableStateOf<JSONObject?>(null)}
-    LaunchedEffect(state.revision){cash=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){val ym=YearMonth.now();var income=BigDecimal.ZERO;var expense=BigDecimal.ZERO;metrics.forEach{m->val role=JSONObject(m.s("config")).s("role");if(role in setOf("income","expense")){val v=vm.store.aggregate(m.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString(),"SUM").s("value").toBigDecimalOrNull() ?: BigDecimal.ZERO;if(role=="income")income+=v else expense+=v.abs()}};obj("income" to income.toPlainString(),"expense" to expense.toPlainString(),"net" to MathEngine.cashflow(income,expense).toPlainString())}}
+    var cash by remember{mutableStateOf<List<JSONObject>>(emptyList())}
+    LaunchedEffect(state.revision){cash=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
+        val ym=YearMonth.now();val groups=metrics.filter{JSONObject(it.s("config")).s("role") in setOf("income","expense")}.groupBy{Units.currency(JSONObject(it.s("config")).s("unit"))}
+        groups.map{(currency,group)->var income=BigDecimal.ZERO;var expense=BigDecimal.ZERO;group.forEach{m->val c=JSONObject(m.s("config"));val v=vm.store.aggregate(m.s("id"),ym.atDay(1).toString(),ym.atEndOfMonth().toString(),"SUM").s("value").toBigDecimalOrNull() ?: BigDecimal.ZERO;val amount=if(currency=="CNY") Units.convert(v,c.s("unit"),"CNY") else v;if(c.s("role")=="income")income+=amount else expense+=amount.abs()};obj("unit" to currency,"income" to income.toPlainString(),"expense" to expense.toPlainString(),"net" to MathEngine.cashflow(income,expense).toPlainString())}
+    }}
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        if(metrics.any{JSONObject(it.s("config")).s("role") in setOf("income","expense")})cash?.let{c->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("本月现金流",style=MaterialTheme.typography.titleMedium);Text("收入 ${c.s("income")}　支出 ${c.s("expense")}");Text("净额 ${c.s("net")}",style=MaterialTheme.typography.headlineSmall)}}}
+        cash.forEach{c->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("本月现金流 · ${c.s("unit")}",style=MaterialTheme.typography.titleMedium);Text("收入 ${c.s("income")}　支出 ${c.s("expense")}");Text("净额 ${c.s("net")}",style=MaterialTheme.typography.headlineSmall)}}}
         Pick("选择指标",metrics.map{it.s("id") to it.s("title")},metricId){metricId=it}
         metrics.firstOrNull{it.s("id")==metricId}?.let{m->MetricPanel(m,vm,state.revision,onRecord={vm.work("录入提示"){obj("message" to "请在空间中打开指标并点击新增记录")}})}
         if(metrics.isEmpty())Text("暂无指标")

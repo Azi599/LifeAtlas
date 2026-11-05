@@ -23,7 +23,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle wrapper --gradle-version 8.9
+      - run: ./gradlew --version
       - name: Compile and unit test
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:assembleDebugAndroidTest -PatlasVersionCode=$((1000 + ${{ github.run_number }})) --stacktrace
       - name: Enable KVM

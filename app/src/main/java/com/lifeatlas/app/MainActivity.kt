@@ -35,24 +35,46 @@ val atlasColors=lightColorScheme(primary=Color(0xff68538a),secondary=Color(0xff5
 class MainActivity:ComponentActivity() {
     private lateinit var vm:AtlasModel
     private var csv=false
-    private val export=registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){it?.let{vm.export(it,csv)}}
+    private var errorExport=false
+    private var csvUri by mutableStateOf<Uri?>(null)
+    private val export=registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){it?.let{if(errorExport)vm.exportErrors(it) else vm.export(it,csv)}}
+    private val csvPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()){csvUri=it}
     private val restore=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.restore(it)}}
     private val plugin=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.importPlugin(it)}}
     private val image=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.addImage(it)}}
     private val speech=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){r->r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let{vm.saveDraft(it);vm.submit(it)}}
     override fun onCreate(savedInstanceState:Bundle?) {
-        super.onCreate(savedInstanceState);vm=ViewModelProvider(this)[AtlasModel::class.java]
-        setContent {MaterialTheme(colorScheme=atlasColors) {App(vm,onExport={isCsv->csv=isCsv;export.launch(if(isCsv) "LifeAtlas-records.csv" else "LifeAtlas-backup.jsonl")},onRestore={restore.launch(arrayOf("*/*"))},onPlugin={plugin.launch(arrayOf("application/json","text/plain","*/*"))},onImage={image.launch(arrayOf("image/*"))},onVoice={val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-CN");if(intent.resolveActivity(packageManager)!=null) speech.launch(intent) else vm.work("语音输入"){obj("message" to "请点击输入法的麦克风进行语音输入")}})}}
+        super.onCreate(savedInstanceState)
+        vm=ViewModelProvider(this)[AtlasModel::class.java]
+        setContent {
+            MaterialTheme(colorScheme=atlasColors) {
+                App(vm,
+                    onExport={isCsv->errorExport=false;csv=isCsv;export.launch(if(isCsv) "LifeAtlas-records.csv" else "LifeAtlas-backup.jsonl")},
+                    onCsv={csvPicker.launch(arrayOf("text/*","application/csv","*/*"))},
+                    onErrors={errorExport=true;export.launch("LifeAtlas-import-errors.csv")},
+                    onRestore={restore.launch(arrayOf("*/*"))},
+                    onPlugin={plugin.launch(arrayOf("application/json","text/plain","*/*"))},
+                    onImage={image.launch(arrayOf("image/*"))},
+                    onVoice={
+                        val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM).putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-CN")
+                        if(intent.resolveActivity(packageManager)!=null) speech.launch(intent)
+                        else vm.work("语音输入"){obj("message" to "请点击输入法的麦克风进行语音输入")}
+                    }
+                )
+                csvUri?.let{uri->val state by vm.ui.collectAsState();CsvImportDialog(state.objects,onDismiss={csvUri=null},onImport={metric,value,date->vm.importCsv(uri,metric,value,date);csvUri=null})}
+            }
+        }
     }
 }
 
-@Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit,onVoice:()->Unit) {
+@Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit,onVoice:()->Unit) {
     val state by vm.ui.collectAsState();var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
-    var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)}
+    var command by rememberSaveable{mutableStateOf(vm.draft)};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)}
     val chosen=state.objects.firstOrNull{it.s("id")==selected}
     val linked=storeRelations(vm,selected,state.revision)
     fun open(id:String) {selected=id;page="spaces";vm.settings.prefs.edit().putString("selected",id).apply()}
     BackHandler(enabled=selected!=null || page!="workspace") {if(selected!=null) selected=chosen?.s("parent_id")?.ifEmpty{null} else page="workspace"}
+    LaunchedEffect(state.pending){if(state.pending!=null){page="workspace";selected=null}}
     LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}}
     Scaffold(
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
@@ -64,7 +86,7 @@ class MainActivity:ComponentActivity() {
             }
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }},
-        bottomBar={NavigationBar {listOf("workspace" to "工作区","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "设置").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={Text(listOf("◎","▦","≡","↗","⚙")[i])},label={Text(title,maxLines=1)})}}}
+        bottomBar={NavigationBar {listOf("workspace" to "工作区","spaces" to "空间","history" to "记录","analytics" to "分析","settings" to "设置").forEachIndexed{i,(id,title)->NavigationBarItem(selected=page==id,onClick={page=id;selected=null},icon={Text(listOf("◎","▦","≡","↗","⚙")[i])},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelSmall)})}}}
     ) {padding->
         LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             if(state.status.isNotBlank()) item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
@@ -90,7 +112,8 @@ class MainActivity:ComponentActivity() {
                     } else if(chosen?.s("type")=="VIEW") {
                         val c=JSONObject(chosen.s("config"))
                         if(c.s("component")=="chart") {val metric=state.objects.firstOrNull{it.s("id")==c.s("metricId")};if(metric!=null)item{MetricPanel(metric,vm,state.revision,onRecord={record=metric},chartType=c.s("chart","line"))}}
-                        else if(c.s("component")=="report") {val results=c.optJSONArray("results") ?: JSONArray();items(results.objects()){r->Card{Column(Modifier.padding(16.dp)){Text(state.objects.firstOrNull{it.s("id")==r.s("metricId")}?.s("title") ?: "指标");Text("${r.s("value","暂无数据")} ${r.s("unit")}",style=MaterialTheme.typography.headlineSmall);Text("样本 ${r.optLong("count")} · ${r.s("method")}");Text("${r.s("from")} 至 ${r.s("to")}")}}}}
+                        else if(c.s("component")=="report") item{ReportPanel(c,state,vm)}
+                        else if(c.s("component")=="schema") item{DynamicScreen(c,state,vm,onRecord={record=it},onOpen={open(it)})}
                     }
                     val children=state.objects.filter{it.s("parent_id").ifEmpty{null}==selected}
                     items(children,key={it.s("id")}){o->ObjectCard(o,onOpen={open(o.s("id"))},onEdit={edit=o})}
@@ -99,7 +122,8 @@ class MainActivity:ComponentActivity() {
                 }
                 "history" -> {
                     item{Text("记录",style=MaterialTheme.typography.headlineSmall)}
-                    item{HistoryFilter(vm,state)}
+                    item{TextButton(onClick={eventDialog=true}){Text("记录文字事件")};HistoryFilter(vm,state)}
+                    items(state.events,key={"event-${it.s("id")}"}){event->OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(event.s("raw_input"));Text(event.s("created_at").take(10),style=MaterialTheme.typography.bodySmall)}}}
                     items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else f.s("occurred_at").ifEmpty{f.s("start_at")},style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=state.objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
                     if(state.facts.isEmpty())item{Text("所选范围没有记录")}
                 }
@@ -109,18 +133,22 @@ class MainActivity:ComponentActivity() {
                 }
                 "settings" -> {
                     item{Text("设置",style=MaterialTheme.typography.headlineSmall)}
-                    item{SettingsPanel(vm,onExport,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
-                    item{Text("插件中心",style=MaterialTheme.typography.titleLarge)}
-                    items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${p.s("status")}");TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
-                    item{Text("工作流",style=MaterialTheme.typography.titleLarge)}
+                    item{SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
+                    item{Text("插件中心",style=MaterialTheme.typography.titleLarge);TextButton(onClick={pluginWizard=true}){Text("创建功能包")}}
+                    items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${p.s("status")}");TextButton(onClick={vm.action("atlas.rollbackPlugin",obj("pluginId" to p.s("plugin_id")),"回退插件")}){Text("回退")};TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
+                    item{Text("工作流",style=MaterialTheme.typography.titleLarge);TextButton(onClick={workflowDialog=true}){Text("新建工作流")}}
                     items(state.workflows,key={it.s("id")}){Text(it.s("title"))}
-                    item{Text("应用扩展与更新",style=MaterialTheme.typography.titleLarge)}
+                    item{Text("应用扩展与更新",style=MaterialTheme.typography.titleLarge);TextButton(onClick={buildDialog=true}){Text("新增原生能力")}}
                     items(state.builds,key={it.s("id")}){b->BuildCard(b,vm)}
                 }
             }
             item{Spacer(Modifier.height(12.dp))}
         }
     }
+    if(eventDialog)TextEventDialog(onDismiss={eventDialog=false},onSave={vm.action("atlas.createEvent",obj("text" to it),"记录事件");eventDialog=false})
+    if(pluginWizard) PluginWizard(onDismiss={pluginWizard=false},onPreview={vm.action("atlas.installPlugin",obj("manifest" to it),"预览${it.s("title")}");pluginWizard=false})
+    if(workflowDialog)WorkflowDialog(state.objects,onDismiss={workflowDialog=false},onSave={title,spec->vm.action("atlas.workflow",obj("title" to title,"spec" to spec),"创建工作流");workflowDialog=false})
+    if(buildDialog)BuildRequestDialog(onDismiss={buildDialog=false},onSave={vm.action("atlas.requestBuild",it,"创建扩展任务");buildDialog=false})
     if(create) ObjectDialog(parent=selected,objects=state.objects,onDismiss={create=false},onSave={type,title,config->vm.action("atlas.createObject",obj("type" to type,"title" to title,"parentId" to selected,"config" to config),"创建$title");create=false})
     edit?.let{o->ManageDialog(o,state.objects,vm,onDismiss={edit=null})}
     record?.let{m->RecordDialog(m,onDismiss={record=null},onSave={args->vm.action("atlas.record",args,"记录${m.s("title")}");record=null})}

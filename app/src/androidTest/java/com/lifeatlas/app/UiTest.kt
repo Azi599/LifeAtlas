@@ -28,5 +28,6 @@ class UiTest {
         rule.onNodeWithText("植物养护测试").performScrollTo().performClick()
         rule.onNodeWithText("浇水量").performScrollTo().performClick()
         rule.onNodeWithText("新增记录").assertExists()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("screencap -p /sdcard/Download/lifeatlas-project.png").close()
     }
 }

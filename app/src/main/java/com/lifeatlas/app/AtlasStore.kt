@@ -71,6 +71,10 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         require(table in tables && table!="atlas_operations");val j=journal ?: error("写入必须经过操作事务");val before=one(table,id) ?: return
         j.put(obj("table" to table,"id" to id,"before" to before,"after" to null));writableDatabase.delete(table,"id=?",arrayOf(id))
     }
+    fun <T> savepoint(block:()->T):T {
+        val j=journal ?: error("需要操作事务");val length=j.length();writableDatabase.execSQL("SAVEPOINT import_row")
+        try{val result=block();writableDatabase.execSQL("RELEASE SAVEPOINT import_row");return result}catch(e:Exception){writableDatabase.execSQL("ROLLBACK TO SAVEPOINT import_row");writableDatabase.execSQL("RELEASE SAVEPOINT import_row");while(j.length()>length)j.remove(j.length()-1);throw e}
+    }
     private fun restore(table:String,id:String,row:JSONObject?) { if(row==null) writableDatabase.delete(table,"id=?",arrayOf(id)) else {val existing=one(table,id);if(existing==null) writableDatabase.insertOrThrow(table,null,cv(row)) else writableDatabase.update(table,cv(row),"id=?",arrayOf(id))} }
     @Synchronized fun transact(title:String,requestId:String=uid(),block:()->JSONObject):JSONObject {
         one("atlas_operations",requestId)?.let {return JSONObject(it.s("result"))}
@@ -112,7 +116,7 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
             if(method=="UNION_DURATION" && !c.isNull(2) && !c.isNull(3)) intervals.add(maxOf(lower,Instant.parse(c.getString(2)).epochSecond) to minOf(upper,Instant.parse(c.getString(3)).epochSecond))
         } }
         val result=when(method){"SUM"->if(count==0L) null else sum;"COUNT"->count.toBigDecimal();"MEAN"->if(count==0L) null else sum.divide(count.toBigDecimal(),MathContext.DECIMAL128);"LAST_SNAPSHOT"->last?.toBigDecimal();"MIN"->min;"MAX"->max;"MEDIAN"->MathEngine.median(distribution);"WEIGHTED_MEAN"->if(weights.signum()==0) null else weighted.divide(weights,MathContext.DECIMAL128);"UNION_DURATION"->if(intervals.isEmpty()) null else MathEngine.union(intervals).toBigDecimal();else->null}
-        val report=obj("metricId" to metric,"method" to method,"value" to result?.stripTrailingZeros()?.toPlainString(),"count" to count,"from" to from,"to" to to,"unit" to if(method=="UNION_DURATION") "秒" else metricConfig.s("unit"),"missing" to "缺失值不计入样本；时段并集只计算明确起止区间")
+        val report=obj("metricId" to metric,"method" to method,"value" to result?.stripTrailingZeros()?.toPlainString(),"count" to count,"sum" to sum.toPlainString(),"weightSum" to weights.toPlainString(),"weightedSum" to weighted.toPlainString(),"from" to from,"to" to to,"unit" to if(method=="UNION_DURATION") "秒" else metricConfig.s("unit"),"missing" to "缺失值不计入样本；时段并集只计算明确起止区间")
         writableDatabase.insertWithOnConflict("atlas_aggregates",null,cv(obj("id" to cacheKey,"metric_id" to metric,"revision" to revision,"result" to report.toString())),SQLiteDatabase.CONFLICT_REPLACE)
         return report
     }
