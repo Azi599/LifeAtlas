@@ -26,7 +26,7 @@ class Actions(val store:AtlasStore) {
         "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",
         "atlas.copyObject" to "复制对象定义 args id,title?；不复制数据事实",
         "atlas.deleteObject" to "归档对象 args id，可撤销",
-        "atlas.record" to "新增记录 args metricId,value?(十进制字符串),date(YYYY-MM-DD),occurredAt?,fields?,eventId?,startAt?,endAt?。未知数值留空",
+        "atlas.record" to "新增记录 args metricId,value?(十进制字符串),unit?(原始数值的单位),date(YYYY-MM-DD),occurredAt?,fields?,eventId?,startAt?,endAt?,zone?(IANA 时区)。时刻需带 Z 或 UTC 偏移；未知数值留空",
         "atlas.editRecord" to "修改记录 args id,value?,date?,fields?,startAt?,endAt?,zone?,clearTime?；时长与区间必须一致",
         "atlas.deleteRecord" to "软删除记录 args id；可撤销",
         "atlas.restoreRecord" to "恢复记录 args id",
@@ -72,6 +72,96 @@ class Actions(val store:AtlasStore) {
         (m.optJSONArray("workflows") ?: JSONArray()).objects().forEach{w->val spec=w.optJSONObject("spec") ?: w;require(w.s("triggerMetricKey",spec.s("triggerMetricKey")) in keys){"工作流触发指标不存在"};require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10){"工作流需包含1至10步"}}
         (m.optJSONArray("actions") ?: JSONArray()).objects().forEach{require(it.s("metricKey") in keys && it.s("template") in setOf("record","query","aggregate")) {"动作模板不合法"}}
     }
+    fun validateProposedPlan(plan: JSONObject) {
+        if (plan.s("requestId").isNotBlank() && store.one("atlas_operations", plan.s("requestId")) != null) return
+        val steps = plan.getJSONArray("steps")
+        require(steps.length() in 1..60) { "操作步骤应为 1 至 60 项" }
+        val previous = mutableSetOf<String>()
+        fun requireReference(value: Any, table: String, label: String) {
+            if (value is JSONObject) {
+                val reference = value.s("\$ref")
+                require(reference.isNotBlank() && reference.substringBefore('.') in previous) { "$label 引用无效" }
+            } else {
+                val row = store.one(table, value.toString())
+                require(row != null && row.optInt("deleted") == 0 && row.optInt("archived") == 0) { "$label 不存在，请查找实际对象" }
+                if (label == "指标") require(row.s("type") == "METRIC") { "请选择实际指标" }
+            }
+        }
+        for (step in steps.objects()) {
+            val action = step.getString("actionId")
+            val args = step.getJSONObject("args")
+            val id = step.s("stepId")
+            require(id.isNotBlank() && id !in previous) { "步骤需要唯一编号" }
+            when (action) {
+                "atlas.createObject" -> {
+                    val type = args.getString("type")
+                    val title = args.getString("title").trim()
+                    require(type in objectTypes && title.isNotBlank()) { "请选择对象类型并填写名称" }
+                    if (!args.isNull("parentId") && args.s("parentId").isNotBlank()) {
+                        requireReference(args.get("parentId"), "atlas_objects", "上级对象")
+                    }
+                    if (type == "METRIC") {
+                        validateMetric(args.getJSONObject("config"))
+                        if (args.optJSONObject("parentId") == null) {
+                            val parent = args.s("parentId")
+                            val existing = store.query(
+                                "SELECT id FROM atlas_objects WHERE type='METRIC' AND archived=0 AND title=? AND COALESCE(parent_id,'')=? LIMIT 1",
+                                arrayOf(title, parent)
+                            )
+                            require(existing.isEmpty()) { "已有指标「$title」，请使用它来保存记录" }
+                        }
+                    }
+                }
+                "atlas.record" -> {
+                    requireReference(args.get("metricId"), "atlas_objects", "指标")
+                    LocalDate.parse(args.getString("date"))
+                    args.s("value").takeIf { it.isNotBlank() }?.let(::decimal)
+                    require(args.isNull("fields") || args.optJSONObject("fields") != null) { "记录字段应按名称和数值提供" }
+                    listOf("occurredAt", "startAt", "endAt").forEach { key ->
+                        args.s(key).takeIf { it.isNotBlank() }?.let { Instant.parse(it) }
+                    }
+                }
+                "atlas.editRecord", "atlas.deleteRecord", "atlas.restoreRecord" -> {
+                    if (action == "atlas.restoreRecord") {
+                        require(store.one("atlas_facts", args.getString("id")) != null) { "要恢复的记录不存在" }
+                    } else {
+                        requireReference(args.get("id"), "atlas_facts", "记录")
+                    }
+                    if (action == "atlas.editRecord") {
+                        require(args.keys().asSequence().any { it in setOf("value", "date", "fields", "occurredAt", "startAt", "endAt", "clearTime") }) {
+                            "请先问清楚要修改的内容"
+                        }
+                        require(args.isNull("fields") || args.optJSONObject("fields") != null) { "修改字段应按名称和数值提供" }
+                        args.s("value").takeIf { it.isNotBlank() }?.let(::decimal)
+                    }
+                    val row = store.one("atlas_facts", args.s("id"))
+                    if (row != null) {
+                        val previousReview = step.optJSONObject("review")
+                        require(previousReview == null || previousReview.optLong("revision") == row.optLong("revision")) {
+                            "记录已变化，请重新提交指令核对"
+                        }
+                        val metric = store.one("atlas_objects", row.s("metric_id"))
+                        val config = JSONObject(metric?.s("config", "{}") ?: "{}")
+                        val fields = JSONObject(row.s("fields_json"))
+                        val value = resolvedRecordValue(row.s("value").takeIf { it.isNotBlank() }?.let(::decimal), fields, config)
+                        step.put("review", obj("title" to metric?.s("title"), "date" to row.s("local_date"),
+                            "value" to value?.toPlainString(), "unit" to config.s("unit"), "revision" to row.optLong("revision"),
+                            "zone" to row.s("zone"), "startAt" to row.opt("start_at"), "endAt" to row.opt("end_at"),
+                            "occurredAt" to row.opt("occurred_at"), "fields" to fields))
+                    }
+                }
+                "atlas.installPlugin", "atlas.updatePlugin" -> manifestValid(args.getJSONObject("manifest"))
+                "atlas.report" -> {
+                    val metrics = args.getJSONArray("metrics")
+                    require(metrics.length() in 1..50) { "请选已有指标生成报告" }
+                    for (index in 0 until metrics.length()) requireReference(metrics.get(index), "atlas_objects", "指标")
+                    require(LocalDate.parse(args.getString("from")) <= LocalDate.parse(args.getString("to"))) { "报告日期范围有误" }
+                }
+            }
+            previous.add(id)
+        }
+    }
+
     fun execute(plan:JSONObject,confirmed:Boolean=false):JSONObject {
         val steps=plan.getJSONArray("steps");require(steps.length() in 1..60)
         if(!confirmed && (steps.objects().any{it.s("actionId") in setOf("atlas.installPlugin","atlas.updatePlugin","atlas.rollbackPlugin")} || steps.objects().count{it.s("actionId") in setOf("atlas.deleteRecord","atlas.deleteObject")}>10)) return obj("status" to "PREVIEW","plan" to plan.copyJson().put("impact",pluginImpact(steps)))
@@ -131,7 +221,7 @@ class Actions(val store:AtlasStore) {
                 if(a.has("archived")) row.put("archived",if(a.getBoolean("archived")) 1 else 0)
                 row.put("revision",row.getLong("revision")+1);row.put("updated_at",now());store.put("atlas_objects",row);return obj("id" to row.s("id"))
             }
-            "atlas.createEvent" -> return obj("id" to event(a.getString("text"),a.s("id").ifEmpty{uid()},a.s("date").ifEmpty{null},a.s("occurredAt").ifEmpty{null},a.s("zone",ZoneId.systemDefault().id)))
+            "atlas.createEvent" -> return obj("id" to event(a.getString("text"),a.s("id").ifEmpty{uid()},a.s("date").ifEmpty{null},a.s("occurredAt").ifEmpty{null},a.s("zone",ZoneId.systemDefault().id),source="text"))
             "atlas.deleteObject" -> return dispatch("atlas.updateObject",obj("id" to a.getString("id"),"archived" to true))
             "atlas.copyObject" -> {val source=store.one("atlas_objects",a.getString("id")) ?: error("对象不存在");return dispatch("atlas.createObject",obj("type" to source.s("type"),"title" to a.s("title",source.s("title")+" 副本"),"parentId" to source.s("parent_id").ifEmpty{null},"config" to JSONObject(source.s("config"))))}
             "atlas.relate"->{val from=a.getString("fromId");val to=a.getString("toId");require(store.one("atlas_objects",from)!=null && store.one("atlas_objects",to)!=null);val id=uid();store.put("atlas_relations",obj("id" to id,"from_id" to from,"to_id" to to,"kind" to a.s("kind","related")));return obj("id" to id)}
@@ -241,10 +331,10 @@ class Actions(val store:AtlasStore) {
             }
         };return result
     }
-    private fun event(raw:String,id:String=uid(),date:String?=null,occurred:String?=null,zone:String=ZoneId.systemDefault().id):String {
+    private fun event(raw:String,id:String=uid(),date:String?=null,occurred:String?=null,zone:String=ZoneId.systemDefault().id,source:String="workspace"):String {
         require(id.length<=120 && raw.length<=100000);if(store.one("atlas_events",id)!=null)return id
         if(date!=null)LocalDate.parse(date);ZoneId.of(zone);if(occurred!=null)require(Instant.parse(occurred).atZone(ZoneId.of(zone)).toLocalDate().toString()==date){"事件发生时刻与日期不一致"}
-        val t=now();store.put("atlas_events",obj("id" to id,"raw_input" to raw,"source" to "workspace","created_at" to t,"updated_at" to t,"zone" to zone,"local_date" to date,"occurred_at" to occurred,"precision" to if(occurred!=null) "INSTANT" else if(date!=null) "DATE" else "UNKNOWN"));return id
+        val t=now();store.put("atlas_events",obj("id" to id,"raw_input" to raw,"source" to source,"created_at" to t,"updated_at" to t,"zone" to zone,"local_date" to date,"occurred_at" to occurred,"precision" to if(occurred!=null) "INSTANT" else if(date!=null) "DATE" else "UNKNOWN"));return id
     }
     private fun record(a:JSONObject,raw:String,runWorkflow:Boolean=true):JSONObject {
         val metric=a.getString("metricId");val owner=store.one("atlas_objects",metric) ?: error("指标不存在");require(owner.s("type")=="METRIC" && owner.optInt("archived")==0)

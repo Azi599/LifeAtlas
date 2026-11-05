@@ -114,6 +114,35 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         return query(sql,(listOf(from,to)+listOfNotNull(metric)+listOf(limit.coerceIn(1,500).toString(),offset.coerceAtLeast(0).toString())).toTypedArray()).map{r->val raw=r.s("value").takeIf{it.isNotEmpty()}?.let(::decimal);val value=resolvedRecordValue(raw,JSONObject(r.s("fields_json")),config(r.s("metric_id")));r.put("raw_value",raw?.toPlainString() ?: JSONObject.NULL);r.put("value",value?.toPlainString() ?: JSONObject.NULL);if(raw!=null && value==null)r.put("calculationError",true);r}
 
     }
+    fun historyEvents(metricId: String?, from: String, to: String, offset: Int): List<JSONObject> {
+        val metricFilter = if (metricId == null) "" else "AND f.metric_id = ?"
+        val args = mutableListOf(from, to)
+        if (metricId != null) args.add(metricId)
+        val textEvents = if (metricId != null) "" else """
+            UNION ALL
+            SELECT e.*, e.local_date timeline_date, julianday(e.occurred_at) timeline_time, 0 fact_count
+            FROM atlas_events e
+            WHERE (e.local_date BETWEEN ? AND ? OR e.local_date IS NULL)
+                AND (e.source = 'text' OR NOT EXISTS (SELECT 1 FROM atlas_facts f WHERE f.event_id = e.id))
+                AND NOT EXISTS (SELECT 1 FROM matching WHERE matching.event_id = e.id)
+        """.trimIndent()
+        if (metricId == null) args.addAll(listOf(from, to))
+        args.add(offset.coerceAtLeast(0).toString())
+        return query("""
+            WITH matching AS (
+                SELECT f.event_id, MAX(f.local_date) timeline_date,
+                    MAX(julianday(COALESCE(f.start_at, f.occurred_at))) timeline_time, COUNT(*) fact_count
+                FROM atlas_facts f
+                WHERE f.deleted = 0 AND f.local_date BETWEEN ? AND ? $metricFilter
+                GROUP BY f.event_id
+            )
+            SELECT e.*, m.timeline_date, m.timeline_time, m.fact_count
+            FROM matching m JOIN atlas_events e ON e.id = m.event_id
+            $textEvents
+            ORDER BY timeline_date DESC, timeline_time DESC, created_at DESC, id DESC LIMIT 50 OFFSET ?
+        """.trimIndent(), args.toTypedArray())
+    }
+
     @Synchronized fun aggregate(metric:String,from:String,to:String,method:String=config(metric).s("aggregate","SUM")):JSONObject {
         LocalDate.parse(from);LocalDate.parse(to);require(method in aggregateMethods)
         val metricConfig=config(metric)

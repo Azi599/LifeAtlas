@@ -34,34 +34,46 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     private fun update(block:(AtlasState)->AtlasState) {state.update(block)}
     fun saveDraft(s:String) {draft=s;settings.prefs.edit().putString("draft",s).apply()}
     fun refresh()=viewModelScope.launch(Dispatchers.IO) {load()}
-    private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,facts=store.facts(historyMetric,historyFrom,historyTo,historyOffset),events=store.query("SELECT e.*,(SELECT COUNT(*) FROM atlas_facts f WHERE f.event_id=e.id AND f.deleted=0) fact_count FROM atlas_events e WHERE (e.local_date BETWEEN ? AND ? OR e.local_date IS NULL) ORDER BY e.local_date DESC,e.created_at DESC LIMIT 50 OFFSET ?",arrayOf(historyFrom,historyTo,historyOffset.toString())),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
+    private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,facts=store.facts(historyMetric,historyFrom,historyTo,historyOffset),events=store.historyEvents(historyMetric,historyFrom,historyTo,historyOffset),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
         commandMutex.withLock {
         update{it.copy(busy=true,status=title,error="")}
-        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成"))};load()} catch(e:Exception){update{it.copy(status="操作失败："+(e.message ?: "请重试"),error=e.message ?: "操作失败")}} finally{update{it.copy(busy=false)}}
+        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成"))};load()} catch(e:Exception){update{it.copy(status="操作失败："+(e.message?.take(160) ?: "请重试"),error=e.message?.take(300) ?: "操作失败")}} finally{update{it.copy(busy=false)}}
         }
     }
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}
     fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在保存"){
-        val result=actions.execute(plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)},confirmed)
+        val command=plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)}
+        if(command.optBoolean("ai")) actions.validateProposedPlan(command)
+        if(command.optBoolean("fromChoice") && requiresReview(command)) {
+            command.remove("fromChoice")
+            return@work obj("status" to "PREVIEW", "plan" to command, "message" to "请核对后保存")
+        }
+        val result=actions.execute(command,confirmed)
         if(result.s("status")=="DONE" && plan.optBoolean("imageImport")){update{it.copy(image=null,imageText="",imageLayout="[]")};saveDraft("")}
         result
     }
     private fun planInput(input:String,source:String="",importOnly:Boolean=false):JSONObject {
-        val context=obj("appearance" to ThemeRepository(store).appearance(),"currentTheme" to ThemeRepository(store).current(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
+        val context=obj("appearance" to ThemeRepository(store).appearance(),"objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
         if(source.isNotBlank())context.put("imageText",source).put("imageLayout",JSONArray(state.value.imageLayout)).put("imageImport",importOnly)
         var attempt=0
         while(true) {
             val plan=planner.plan(settings.ai(),input,context)
             if(plan.has("question"))return obj("message" to plan.getString("question"),"question" to plan)
-            if(source.isNotBlank()) {
-                try {if(importOnly)PlanReview.validateImageImport(plan,source)}catch(e:Exception){if(++attempt>2)throw e;context.put("planError",e.message).put("rejectedPlan",plan);continue}
-                // Images always receive a review. Selecting an image never writes life data.
-                return obj("status" to "PREVIEW","plan" to plan.put("imageImport",true),"message" to "识别完成，请核对后保存")
+            if(source.isNotBlank() || requiresReview(plan)) {
+                return obj("status" to "PREVIEW", "plan" to plan,
+                    "message" to if(source.isNotBlank()) "识别完成，请核对后保存" else "请核对后保存")
             }
             try{update{it.copy(status="正在执行")};return actions.execute(plan)}catch(missing:CapabilityMissing){require(++attempt<=2){"能力生成仍需补充信息，输入已保存"};context.put("missingAction",missing.action).put("instruction","通过现有通用操作、声明式插件或原生构建实现缺失能力")}
         }
     }
+    private fun requiresReview(plan: JSONObject): Boolean =
+        plan.optBoolean("imageImport") || (plan.optJSONArray("steps") ?: JSONArray()).objects().any { step ->
+            val action = step.s("actionId")
+            action in setOf("atlas.editRecord", "atlas.deleteRecord", "atlas.restoreRecord", "atlas.deleteObject") ||
+                (action == "atlas.createObject" && step.optJSONObject("args")?.s("type") == "METRIC")
+        }
+
     fun submit(input:String) {
         saveDraft(input)
         work("正在理解需求") {

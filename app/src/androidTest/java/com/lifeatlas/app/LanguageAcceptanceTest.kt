@@ -88,6 +88,10 @@ class LanguageAcceptanceTest {
                 show("30 分钟")
             }
             scenario("edit-history", "把昨天的晨间体重从65.2更正为64.9公斤，只改那一条。") {
+                assertNotNull("更正应先给核对", model.ui.value.pending)
+                record(weight, yesterday, "65.2")
+                show("65.2 → 64.9", substring = true)
+                confirmIfNeeded()
                 assertTrue(record(weight, yesterday, "64.9").optLong("revision") > 1)
                 record(weight, today, "65")
                 assertEquals(1, model.store.facts(weight, yesterday.toString(), yesterday.toString()).size)
@@ -106,7 +110,9 @@ class LanguageAcceptanceTest {
                 record(sleep, yesterday, "40")
                 show(pending.s("question"))
             }
-            scenario("report", "把昨天到今天的生活支出汇总，生成一个叫两日支出核对的报告页。") {
+            val previousTotal = model.store.aggregate(expense, yesterday.toString(), today.toString()).s("value").toBigDecimalOrNull()
+                ?: java.math.BigDecimal.ZERO
+            scenario("report", "今天买面包6元，记入生活支出。再把昨天到今天的支出汇总，生成一个叫两日支出核对的报告页。") {
                 confirmIfNeeded()
                 val report = model.store.objects(all = true).single { it.s("title") == "两日支出核对" }
                 assertEquals("VIEW", report.s("type"))
@@ -116,7 +122,8 @@ class LanguageAcceptanceTest {
                 assertEquals(today.toString(), config.s("to"))
                 show("打开两日支出核对")
                 rule.onNodeWithText("打开两日支出核对").performClick()
-                show("-18.50", substring = true)
+                record(expense, today, "-6.00")
+                show((previousTotal - java.math.BigDecimal("6.00")).toPlainString(), substring = true)
             }
             scenario("new-feature", "做个城市观鸟功能，记录鸟名、看到的只数、有没有听到叫声。我要录入入口、历史记录和趋势图。") {
                 val draft = model.ui.value.pending ?: error("新功能应先给预览")
@@ -132,6 +139,10 @@ class LanguageAcceptanceTest {
                 show("打开${manifest.s("title")}")
                 rule.onNodeWithText("打开${manifest.s("title")}").performClick()
                 show(manifest.s("title"))
+                val pages = model.store.query("SELECT config FROM atlas_objects WHERE plugin_id=? AND type='VIEW' AND archived=0", arrayOf(manifest.s("id")))
+                val components = pages.flatMap { row -> JSONObject(row.s("config")).optJSONArray("components")?.objects().orEmpty() }
+                val types = components.map { it.s("component") }.toSet()
+                assertTrue("实际页面缺录入、历史或趋势：$types", types.containsAll(setOf("form", "history", "chart")))
             }
             scenario("navigation", "打开分析页，我要看看统计。") {
                 show("选择指标：请选择")
@@ -158,10 +169,13 @@ class LanguageAcceptanceTest {
             .getJSONObject("steps").getJSONObject("result").s("id")
     }
 
-    private fun record(metricId: String, date: LocalDate, value: String): JSONObject =
-        model.store.facts(metricId, date.toString(), date.toString()).single { row ->
-            row.s("value").toBigDecimalOrNull()?.compareTo(value.toBigDecimal()) == 0
-        }
+    private fun record(metricId: String, date: LocalDate, value: String): JSONObject {
+        val rows = model.store.facts(metricId, date.toString(), date.toString())
+        val actual = rows.map { it.s("value", "空") }
+        assertEquals("$date 应保存一条 $value，实际 $actual", 1, rows.size)
+        assertEquals("$date 应保存 $value，实际 $actual", 0, actual.single().toBigDecimal().compareTo(value.toBigDecimal()))
+        return rows.single()
+    }
 
     private fun scenario(id: String, input: String, verify: () -> Unit) {
         val evidence = obj("id" to id, "input" to input)
@@ -176,15 +190,14 @@ class LanguageAcceptanceTest {
             waitForWork(before)
             hideKeyboard()
             val state = model.ui.value
-            evidence.put("response", state.result ?: JSONObject.NULL)
+            evidence.put("response", state.result?.takeUnless { it === before.result } ?: JSONObject.NULL)
             evidence.put("preview", state.pending ?: JSONObject.NULL)
             assertTrue(state.status, state.error.isBlank())
             verify()
             evidence.put("passed", true)
-        } catch (error: AssertionError) {
-            evidence.put("passed", false).put("failure", error.message)
-        } catch (error: Exception) {
-            evidence.put("passed", false).put("failure", error.message)
+        } catch (error: Throwable) {
+            if (error is VirtualMachineError) throw error
+            evidence.put("passed", false).put("failure", error.message?.take(500) ?: error.javaClass.simpleName)
         } finally {
             val state = model.ui.value
             evidence.put("status", state.status).put("error", state.error)

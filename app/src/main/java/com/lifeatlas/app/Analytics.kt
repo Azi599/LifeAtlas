@@ -75,7 +75,7 @@ import java.time.YearMonth
     var metric by remember{mutableStateOf(state.historyMetric)};var from by remember{mutableStateOf(state.historyFrom)};var to by remember{mutableStateOf(state.historyTo)};var offset by remember{mutableIntStateOf(state.historyOffset)}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {Pick("指标",listOf("" to "全部指标")+state.objects.filter{it.s("type")=="METRIC"}.map{it.s("id") to it.s("title")},metric){metric=it};OutlinedTextField(from,{from=it},label={Text("开始日期")},modifier=Modifier.fillMaxWidth());OutlinedTextField(to,{to=it},label={Text("结束日期")},modifier=Modifier.fillMaxWidth());Row{Button(onClick={offset=0;vm.history(metric.ifEmpty{null},from,to,offset)}){Text("查询")};TextButton(enabled=offset>0,onClick={offset=(offset-50).coerceAtLeast(0);vm.history(metric.ifEmpty{null},from,to,offset)}){Text("上一页")};TextButton(enabled=state.facts.size==50,onClick={offset+=50;vm.history(metric.ifEmpty{null},from,to,offset)}){Text("下一页")}}}
 }
-@Composable fun Analytics(vm:AtlasModel,state:AtlasState) {
+@Composable fun Analytics(vm:AtlasModel,state:AtlasState,onRecord:(JSONObject)->Unit) {
     var metricId by remember{mutableStateOf("")};val metrics=state.objects.filter{it.s("type")=="METRIC"}
     var cash by remember{mutableStateOf<List<JSONObject>>(emptyList())}
     LaunchedEffect(state.revision){cash=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
@@ -85,7 +85,7 @@ import java.time.YearMonth
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
         cash.forEach{c->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("本月已记录现金流 · ${c.s("unit")}",style=MaterialTheme.typography.titleMedium);Text("收入 ${c.s("income")}　支出净额 ${c.s("expense")}");Text("净额 ${c.s("net","待补充")}",style=MaterialTheme.typography.headlineSmall)}}}
         Pick("选择指标",metrics.map{it.s("id") to it.s("title")},metricId){metricId=it}
-        metrics.firstOrNull{it.s("id")==metricId}?.let{m->MetricPanel(m,vm,state.revision,onRecord={vm.work("录入提示"){obj("message" to "请在空间中打开指标并点击新增记录")}})}
+        metrics.firstOrNull{it.s("id")==metricId}?.let{m->MetricPanel(m,vm,state.revision,onRecord={onRecord(m)})}
         if(metrics.isEmpty())Text("暂无指标")
     }
 }

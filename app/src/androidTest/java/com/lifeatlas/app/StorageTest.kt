@@ -31,6 +31,40 @@ class StorageTest {
     @Test fun dateOnlyAndMissingValuePreserved(){val id=metric();actions.single("atlas.record",obj("metricId" to id,"date" to "2026-11-04","fields" to obj("note" to "补记")));val row=db.facts(id).first();assertEquals("2026-11-04",row.s("local_date"));assertEquals("DATE",row.s("precision"));assertTrue(row.isNull("occurred_at"));assertTrue(row.isNull("value"));assertTrue(db.aggregate(id,"2026-11-01","2026-11-30").isNull("value"))}
     @Test fun undoRedoPersistsAndIdempotency(){val id=metric("CHANGE","SUM");val plan=obj("requestId" to "same-request","steps" to JSONArray().put(obj("stepId" to "r","actionId" to "atlas.record","args" to obj("metricId" to id,"value" to "3","date" to "2026-11-04"))));actions.execute(plan);actions.execute(plan);assertEquals(1,db.facts(id).size);db.undo();assertEquals(0,db.facts(id).size);db.undo(true);assertEquals(1,db.facts(id).size)}
     @Test fun referencesResolveToCreatedObject(){val result=actions.execute(obj("steps" to JSONArray().put(obj("stepId" to "p","actionId" to "atlas.createObject","args" to obj("type" to "PROJECT","title" to "阅读"))).put(obj("stepId" to "m","actionId" to "atlas.createObject","args" to obj("type" to "METRIC","title" to "页数","parentId" to obj("\$ref" to "p.id"),"config" to obj("kind" to "CHANGE","unit" to "页","aggregate" to "SUM"))))));val ids=result.getJSONObject("steps");assertEquals(ids.getJSONObject("p").s("id"),db.one("atlas_objects",ids.getJSONObject("m").s("id"))!!.s("parent_id"))}
+    @Test fun timelineFiltersByLiveRecordAndDate() {
+        val selected = metric()
+        val other = metric()
+        fun save(id: String, date: String): JSONObject = actions.single(
+            "atlas.record", obj("metricId" to id, "value" to "4", "date" to date)
+        ).getJSONObject("steps").getJSONObject("result")
+        val expected = save(selected, "2026-11-05")
+        save(other, "2026-11-05")
+        val corrected = save(selected, "2026-10-05")
+        actions.single("atlas.editRecord", obj("id" to corrected.s("id"), "date" to "2026-11-04"))
+        val deleted = save(selected, "2026-11-06")
+        actions.single("atlas.deleteRecord", obj("id" to deleted.s("id")))
+        val events = db.historyEvents(selected, "2026-11-01", "2026-11-30", 0)
+        assertEquals(listOf(expected.s("eventId"), corrected.s("eventId")), events.map { it.s("id") })
+        assertEquals("2026-11-04", events.last().s("timeline_date"))
+    }
+    @Test fun proposedEditCannotReuseAStaleReview() {
+        val metricId = metric()
+        val result = actions.single("atlas.record", obj("metricId" to metricId, "value" to "65.2", "date" to "2026-11-05"))
+        val id = result.getJSONObject("steps").getJSONObject("result").s("id")
+        val plan = obj("steps" to JSONArray().put(obj(
+            "stepId" to "edit", "actionId" to "atlas.editRecord", "args" to obj("id" to id, "value" to "64.9")
+        )))
+        actions.validateProposedPlan(plan)
+        assertEquals("65.2", plan.getJSONArray("steps").getJSONObject(0).getJSONObject("review").s("value"))
+        actions.single("atlas.editRecord", obj("id" to id, "value" to "66"))
+        try {
+            actions.validateProposedPlan(plan)
+            fail("Stale review must require a new review")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message.orEmpty().contains("记录已变化"))
+        }
+        assertEquals("66", db.facts(metricId).single().s("value"))
+    }
     @Test fun backupRoundTripPreservesHistory(){val id=metric();actions.single("atlas.record",obj("metricId" to id,"value" to "65.5","date" to "2026-11-04"));val out=StringWriter();db.export(out);db.import(StringReader(out.toString()).buffered());assertEquals("65.5",db.facts(id).first().s("value"));assertTrue(db.query("SELECT * FROM atlas_operations").isNotEmpty())}
     @Test fun cacheInvalidatesAfterHistoricalCorrection(){
         val id=metric("CHANGE","SUM");val r=actions.single("atlas.record",obj("metricId" to id,"value" to "10","date" to "2026-11-01"));assertEquals("10",db.aggregate(id,"2026-11-01","2026-11-30").s("value"));val fact=r.getJSONObject("steps").getJSONObject("result").s("id")
