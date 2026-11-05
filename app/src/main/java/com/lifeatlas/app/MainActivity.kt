@@ -100,7 +100,7 @@ class MainActivity:ComponentActivity() {
                 "history" -> {
                     item{Text("记录",style=MaterialTheme.typography.headlineSmall)}
                     item{HistoryFilter(vm,state)}
-                    items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else f.s("occurred_at").ifEmpty{f.s("start_at")},style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));if(fields.length()>0) Text(fields.toString(),style=MaterialTheme.typography.bodySmall)}}}
+                    items(state.facts,key={it.s("id")}){f->Card(Modifier.fillMaxWidth().clickable{editingFact=f}){Column(Modifier.padding(16.dp)){Text(f.s("metric_title"),style=MaterialTheme.typography.titleMedium);Text("${f.s("value","未填写")} · ${f.s("local_date")}");Text(if(f.s("precision")=="DATE") "仅日期" else f.s("occurred_at").ifEmpty{f.s("start_at")},style=MaterialTheme.typography.bodySmall);val fields=JSONObject(f.s("fields_json"));val defs=state.objects.firstOrNull{it.s("id")==f.s("metric_id")}?.let{JSONObject(it.s("config")).optJSONArray("fields")};defs?.objects()?.filter{fields.has(it.s("id"))}?.forEach{Text("${it.s("title")}: ${fields.s(it.s("id"))}",style=MaterialTheme.typography.bodySmall)}}}}
                     if(state.facts.isEmpty())item{Text("所选范围没有记录")}
                 }
                 "analytics" -> {
@@ -149,7 +149,7 @@ fun kindName(s:String)=mapOf("SNAPSHOT" to "基础数据","CHANGE" to "真实变
 }
 @Composable fun TimerCard(timer:JSONObject,objects:List<JSONObject>,vm:AtlasModel) {
     var seconds by remember{mutableLongStateOf(0)}
-    LaunchedEffect(timer.toString()){while(true){val periods=JSONArray(timer.s("periods")).objects();seconds=periods.sumOf{Duration.between(Instant.parse(it.s("start")),Instant.parse(it.s("end"))).seconds}+(if(timer.s("running_at").isNotEmpty()) Duration.between(Instant.parse(timer.s("running_at")),Instant.now()).seconds else 0);kotlinx.coroutines.delay(1000)}}
+    LaunchedEffect(timer.toString()){while(true){val periods=JSONArray(timer.s("periods")).objects();seconds=periods.sumOf{Duration.between(Instant.parse(it.s("start")),Instant.parse(it.s("end"))).seconds}+(if(timer.s("running_at").isNotEmpty()) if(!timer.isNull("elapsed_start") && timer.optInt("boot_count",-1)==android.provider.Settings.Global.getInt(vm.store.appContext.contentResolver,"boot_count",0)) ((android.os.SystemClock.elapsedRealtime()-timer.getLong("elapsed_start"))/1000).coerceAtLeast(0) else Duration.between(Instant.parse(timer.s("running_at")),Instant.now()).seconds.coerceAtLeast(0) else 0);kotlinx.coroutines.delay(1000)}}
     OutlinedCard{Column(Modifier.padding(16.dp)){Text(objects.firstOrNull{it.s("id")==timer.s("metric_id")}?.s("title") ?: "活动");Text("${seconds/3600}:${(seconds/60%60).toString().padStart(2,'0')}:${(seconds%60).toString().padStart(2,'0')}",style=MaterialTheme.typography.headlineMedium);Row{TextButton(onClick={vm.action(if(timer.s("state")=="RUNNING") "time.pause" else "time.resume",obj("timerId" to timer.s("id")),"更新计时")}){Text(if(timer.s("state")=="RUNNING") "暂停" else "恢复")};TextButton(onClick={vm.action("time.stop",obj("timerId" to timer.s("id")),"保存计时")}){Text("结束并保存")}}}}
 }
 @Composable fun BuildCard(b:JSONObject,vm:AtlasModel) {

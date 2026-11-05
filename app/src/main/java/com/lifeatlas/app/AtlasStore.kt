@@ -12,7 +12,7 @@ import java.math.BigDecimal
 import java.math.MathContext
 import java.time.*
 
-class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpenHelper(appContext,name,null,2) {
+class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpenHelper(appContext,name,null,4) {
     val tables=listOf("atlas_objects","atlas_relations","atlas_events","atlas_facts","atlas_fields","atlas_plugins","atlas_layout","atlas_timers","atlas_workflows","atlas_builds","atlas_operations")
     private var journal:JSONArray?=null
     override fun onConfigure(db:SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true);db.enableWriteAheadLogging() }
@@ -31,11 +31,18 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
             "CREATE INDEX field_search ON atlas_fields(field_id,value,fact_id)",
             "CREATE TABLE atlas_plugins(id TEXT PRIMARY KEY,plugin_id TEXT NOT NULL,version INTEGER NOT NULL,manifest TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(plugin_id,version))",
             "CREATE TABLE atlas_layout(id TEXT PRIMARY KEY,object_id TEXT NOT NULL,position INTEGER NOT NULL,hidden INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE atlas_timers(id TEXT PRIMARY KEY,metric_id TEXT NOT NULL,state TEXT NOT NULL,periods TEXT NOT NULL,running_at TEXT,zone TEXT NOT NULL,created_at TEXT NOT NULL)",
+            "CREATE TABLE atlas_timers(id TEXT PRIMARY KEY,metric_id TEXT NOT NULL,state TEXT NOT NULL,periods TEXT NOT NULL,running_at TEXT,zone TEXT NOT NULL,created_at TEXT NOT NULL,elapsed_start INTEGER,boot_count INTEGER)",
             "CREATE TABLE atlas_workflows(id TEXT PRIMARY KEY,title TEXT NOT NULL,spec TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1)",
             "CREATE TABLE atlas_builds(id TEXT PRIMARY KEY,request TEXT NOT NULL,status TEXT NOT NULL,remote_id TEXT,artifact_url TEXT,detail TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)",
             "CREATE TABLE atlas_operations(id TEXT PRIMARY KEY,title TEXT NOT NULL,patches TEXT NOT NULL,result TEXT NOT NULL,undone INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL)"
         ).forEach(db::execSQL)
+        revisionSchema(db)
+    }
+    private fun revisionSchema(db:SQLiteDatabase) {
+        db.execSQL("CREATE TABLE atlas_revisions(id TEXT PRIMARY KEY,revision INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE atlas_aggregates(id TEXT PRIMARY KEY,metric_id TEXT NOT NULL,revision INTEGER NOT NULL,result TEXT NOT NULL)")
+        listOf("INSERT" to "NEW", "UPDATE" to "NEW", "DELETE" to "OLD").forEach{(event,row)->db.execSQL("CREATE TRIGGER fact_revision_${event.lowercase()} AFTER $event ON atlas_facts BEGIN INSERT INTO atlas_revisions VALUES ($row.metric_id,1) ON CONFLICT(id) DO UPDATE SET revision=revision+1; END")}
+        db.execSQL("CREATE TRIGGER metric_revision AFTER UPDATE OF config ON atlas_objects WHEN NEW.type='METRIC' BEGIN INSERT INTO atlas_revisions VALUES(NEW.id,1) ON CONFLICT(id) DO UPDATE SET revision=revision+1; END")
     }
     override fun onUpgrade(db:SQLiteDatabase,oldVersion:Int,newVersion:Int) {
         if(oldVersion==1) {
@@ -46,7 +53,7 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
             } }
             db.execSQL("INSERT INTO atlas_events SELECT id,'','legacy',recorded_at,recorded_at,zone FROM events")
             db.execSQL("INSERT INTO atlas_facts(id,event_id,metric_id,kind,value,local_date,precision,zone,created_at,updated_at) SELECT id,event_id,metric_id,kind,value,local_date,'DATE',zone,created_at,updated_at FROM records")
-        } else error("缺少数据库迁移：$oldVersion → $newVersion")
+        } else if(oldVersion in 2..3) {if(oldVersion==2) revisionSchema(db);db.execSQL("ALTER TABLE atlas_timers ADD COLUMN elapsed_start INTEGER");db.execSQL("ALTER TABLE atlas_timers ADD COLUMN boot_count INTEGER")} else error("缺少数据库迁移：$oldVersion → $newVersion")
     }
     private fun cv(j:JSONObject)=ContentValues().apply { j.keys().forEach { k-> val v=j.get(k);when {v==JSONObject.NULL->putNull(k);v is Int->put(k,v);v is Long->put(k,v);else->put(k,v.toString())} } }
     private fun row(c:Cursor):JSONObject=JSONObject().apply {c.columnNames.forEachIndexed {i,k-> put(k,if(c.isNull(i)) JSONObject.NULL else when(c.getType(i)){Cursor.FIELD_TYPE_INTEGER->c.getLong(i);Cursor.FIELD_TYPE_FLOAT->c.getDouble(i);else->c.getString(i)})} }
@@ -88,16 +95,26 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
     fun aggregate(metric:String,from:String,to:String,method:String=config(metric).s("aggregate","SUM")):JSONObject {
         LocalDate.parse(from);LocalDate.parse(to);require(method in aggregateMethods)
         val metricConfig=config(metric)
+        val revision=query("SELECT revision FROM atlas_revisions WHERE id=?",arrayOf(metric)).firstOrNull()?.optLong("revision") ?: 0L
+        val cacheKey="$metric|$from|$to|$method|${ZoneId.systemDefault().id}"
+        query("SELECT result FROM atlas_aggregates WHERE id=? AND revision=?",arrayOf(cacheKey,revision.toString())).firstOrNull()?.let{return JSONObject(it.s("result"))}
         var count=0L;var sum=BigDecimal.ZERO;var weighted=BigDecimal.ZERO;var weights=BigDecimal.ZERO;var last:String?=null;var min:BigDecimal?=null;var max:BigDecimal?=null
         val distribution=ArrayList<BigDecimal>();val intervals=ArrayList<Pair<Long,Long>>()
-        readableDatabase.rawQuery("SELECT value,fields_json,start_at,end_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND local_date BETWEEN ? AND ? ORDER BY local_date,occurred_at,created_at,id",arrayOf(metric,from,to)).use {c->while(c.moveToNext()) {
+        val lower=LocalDate.parse(from).atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
+        val upper=LocalDate.parse(to).plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().epochSecond
+        val union=method=="UNION_DURATION"
+        val where=if(union) "start_at IS NOT NULL AND end_at IS NOT NULL AND start_at<? AND end_at>?" else "local_date BETWEEN ? AND ?"
+        val args=if(union) arrayOf(metric,Instant.ofEpochSecond(upper).toString(),Instant.ofEpochSecond(lower).toString()) else arrayOf(metric,from,to)
+        readableDatabase.rawQuery("SELECT value,fields_json,start_at,end_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND $where ORDER BY local_date,occurred_at,created_at,id",args).use {c->while(c.moveToNext()) {
             if(!c.isNull(0)) {val fields=JSONObject(c.getString(1));if(metricConfig.s("role") in setOf("income","expense") && fields.s("flow")=="transfer") continue;val v=normalizedValue(decimal(c.getString(0)),fields,metricConfig);count++;sum+=v;last=v.toPlainString();if(min?.let{v<it} ?: true) min=v;if(max?.let{v>it} ?: true) max=v;if(method=="MEDIAN") distribution.add(v)
                 if(method=="WEIGHTED_MEAN") {val w=JSONObject(c.getString(1)).s("weight").takeIf{it.isNotEmpty()}?.let(::decimal);if(w!=null){require(w>=BigDecimal.ZERO);weighted+=v*w;weights+=w}}
             }
-            if(method=="UNION_DURATION" && !c.isNull(2) && !c.isNull(3)) intervals.add(Instant.parse(c.getString(2)).epochSecond to Instant.parse(c.getString(3)).epochSecond)
+            if(method=="UNION_DURATION" && !c.isNull(2) && !c.isNull(3)) intervals.add(maxOf(lower,Instant.parse(c.getString(2)).epochSecond) to minOf(upper,Instant.parse(c.getString(3)).epochSecond))
         } }
         val result=when(method){"SUM"->if(count==0L) null else sum;"COUNT"->count.toBigDecimal();"MEAN"->if(count==0L) null else sum.divide(count.toBigDecimal(),MathContext.DECIMAL128);"LAST_SNAPSHOT"->last?.toBigDecimal();"MIN"->min;"MAX"->max;"MEDIAN"->MathEngine.median(distribution);"WEIGHTED_MEAN"->if(weights.signum()==0) null else weighted.divide(weights,MathContext.DECIMAL128);"UNION_DURATION"->if(intervals.isEmpty()) null else MathEngine.union(intervals).toBigDecimal();else->null}
-        return obj("metricId" to metric,"method" to method,"value" to result?.stripTrailingZeros()?.toPlainString(),"count" to count,"from" to from,"to" to to,"unit" to if(method=="UNION_DURATION") "秒" else config(metric).s("unit"),"missing" to "缺失值不计入样本；时段并集只计算明确起止区间")
+        val report=obj("metricId" to metric,"method" to method,"value" to result?.stripTrailingZeros()?.toPlainString(),"count" to count,"from" to from,"to" to to,"unit" to if(method=="UNION_DURATION") "秒" else metricConfig.s("unit"),"missing" to "缺失值不计入样本；时段并集只计算明确起止区间")
+        writableDatabase.insertWithOnConflict("atlas_aggregates",null,cv(obj("id" to cacheKey,"metric_id" to metric,"revision" to revision,"result" to report.toString())),SQLiteDatabase.CONFLICT_REPLACE)
+        return report
     }
     fun export(writer:Writer) {
         val db=readableDatabase;db.beginTransactionNonExclusive()
@@ -107,7 +124,7 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         val header=JSONObject(reader.readLine() ?: error("备份为空"));require(header.s("format")=="lifeatlas-jsonl" && header.optInt("version")==2){"备份格式不兼容"}
         val recovery=File(appContext.filesDir,"before-restore-${System.currentTimeMillis()}.jsonl");recovery.bufferedWriter().use(::export)
         val db=writableDatabase;db.beginTransaction()
-        try {db.execSQL("PRAGMA defer_foreign_keys=ON");tables.reversed().forEach{db.delete(it,null,null)};var line=reader.readLine();while(line!=null){val entry=JSONObject(line);val table=entry.getString("table");require(table in tables);db.insertOrThrow(table,null,cv(entry.getJSONObject("row")));line=reader.readLine()};db.rawQuery("PRAGMA foreign_key_check",null).use{require(!it.moveToFirst()){ "备份关联校验失败" }};db.setTransactionSuccessful()}finally{db.endTransaction()}
+        try {db.execSQL("PRAGMA defer_foreign_keys=ON");tables.reversed().forEach{db.delete(it,null,null)};var line=reader.readLine();while(line!=null){val entry=JSONObject(line);val table=entry.getString("table");require(table in tables);db.insertOrThrow(table,null,cv(entry.getJSONObject("row")));line=reader.readLine()};db.rawQuery("PRAGMA foreign_key_check",null).use{require(!it.moveToFirst()){ "备份关联校验失败" }};db.delete("atlas_aggregates",null,null);db.setTransactionSuccessful()}finally{db.endTransaction()}
     }
     fun exportCsv(writer:Writer) {
         fun q(x:String)="\""+x.replace("\"","\"\"")+"\""

@@ -38,6 +38,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         saveDraft(input)
         work("正在理解需求") {
             if(input.trim().startsWith("{")) return@work actions.execute(JSONObject(input))
+            Offline.plan(input,store)?.let{return@work actions.execute(it)}
             val context=obj("objects" to JSONArray(store.objects(all=true).take(200)),"recentOperations" to JSONArray(store.query("SELECT title,result FROM atlas_operations ORDER BY created_at DESC LIMIT 5")),"selectedObjectId" to settings.prefs.getString("selected",""))
             val plan=planner.plan(settings.ai(),input,context,state.value.image)
             if(plan.has("question")){update{it.copy(pending=plan)};obj("message" to plan.getString("question"),"question" to plan)} else actions.execute(plan)

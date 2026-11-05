@@ -30,7 +30,7 @@ class Planner(private val actions:Actions) {
             if(plan.has("steps") || plan.has("question")) return plan.put("rawInput",input)
             val tools=plan.optJSONArray("tools") ?: error("AI 没有返回可执行计划")
             require(tools.length() in 1..6)
-            val results=JSONArray();tools.objects().forEach{t->require(t.s("actionId") in setOf("atlas.query","atlas.aggregate","atlas.capabilities","atlas.correlation")){"查询工具无效"};results.put(runCatching{actions.dispatch(t.s("actionId"),t.optJSONObject("args") ?: JSONObject())}.getOrElse{obj("error" to it.message)})}
+            val results=JSONArray();tools.objects().forEach{t->require(t.s("actionId") in setOf("atlas.query","atlas.aggregate","atlas.capabilities","atlas.correlation","atlas.searchObjects","finance.balance")){"查询工具无效"};results.put(runCatching{actions.dispatch(t.s("actionId"),t.optJSONObject("args") ?: JSONObject())}.getOrElse{obj("error" to it.message)})}
             messages.put(obj("role" to "assistant","content" to response));messages.put(obj("role" to "user","content" to "宿主工具实际结果：$results。请继续形成可执行步骤或明确选择。"))
         }
         error("查询轮次达到上限，输入已保存，请缩小任务范围")
