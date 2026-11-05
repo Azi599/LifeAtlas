@@ -23,7 +23,13 @@ import java.time.LocalDate
     fun change(index:Int,key:String,value:String,field:Boolean=false){val copy=edited.copyJson();val args=copy.getJSONArray("steps").getJSONObject(index).getJSONObject("args");if(field){val fields=args.optJSONObject("fields") ?: JSONObject();fields.put(key,value);args.put("fields",fields)}else args.put(key,value);edited=copy;validation=""}
     Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Text(plan.s("question",plan.s("title","操作预览")),style=MaterialTheme.typography.titleMedium)
-        if(plan.has("question")) (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->OutlinedButton(enabled=!busy,modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan"))}){Text(choice.s("title"))}}
+        if(plan.has("question")) {
+            (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->
+                OutlinedButton(enabled=!busy,modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan").copyJson().put("fromChoice",true))}){Text(choice.s("title"))}
+            }
+            if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error)
+            TextButton(enabled=!busy,onClick=onCancel){Text("取消")}
+        }
         else {
             steps.forEachIndexed{index,step->
                 val a=step.optJSONObject("args") ?: JSONObject();val manifest=a.optJSONObject("manifest")
@@ -42,6 +48,22 @@ import java.time.LocalDate
                         }
                         HorizontalDivider()
                     }
+                } else if(step.has("review")) {
+                    val review=step.getJSONObject("review")
+                    Text(actionName(step.s("actionId"))+" · "+review.s("title"),style=MaterialTheme.typography.titleSmall)
+                    val unit=review.s("unit").let{if(it=="CNY")"元" else it}
+                    val value=review.s("value","待补数值")
+                    Text(if(a.has("value")) "$value → ${a.s("value","待补数值")} $unit" else "$value $unit")
+                    Text(if(a.s("date").isNotBlank() && a.s("date")!=review.s("date")) "${review.s("date")} → ${a.s("date")}" else review.s("date"))
+                    val zone=a.s("zone",review.s("zone"))
+                    if(a.optBoolean("clearTime"))Text("移除具体时刻")
+                    for((key,label) in listOf("occurredAt" to "发生时刻","startAt" to "开始","endAt" to "结束")) {
+                        if(a.s(key).isNotBlank())Text("$label ${formatInstant(a.s(key),zone)}")
+                    }
+                    a.optJSONObject("fields")?.let{changed->
+                        changed.keys().forEach{field->Text("$field：${review.optJSONObject("fields")?.s(field,"空") ?: "空"} → ${changed.s(field,"空")}")}
+                    }
+                    HorizontalDivider()
                 } else {
                     Text(if(manifest!=null)manifest.s("title") else "${actionName(step.s("actionId"))} ${a.s("title")}")
                     if(manifest!=null && !hasRecords)FeaturePreview(manifest)

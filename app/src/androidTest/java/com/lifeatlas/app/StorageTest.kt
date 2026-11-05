@@ -47,6 +47,24 @@ class StorageTest {
         assertEquals(listOf(expected.s("eventId"), corrected.s("eventId")), events.map { it.s("id") })
         assertEquals("2026-11-04", events.last().s("timeline_date"))
     }
+    @Test fun proposedEditCannotReuseAStaleReview() {
+        val metricId = metric()
+        val result = actions.single("atlas.record", obj("metricId" to metricId, "value" to "65.2", "date" to "2026-11-05"))
+        val id = result.getJSONObject("steps").getJSONObject("result").s("id")
+        val plan = obj("steps" to JSONArray().put(obj(
+            "stepId" to "edit", "actionId" to "atlas.editRecord", "args" to obj("id" to id, "value" to "64.9")
+        )))
+        actions.validateProposedPlan(plan)
+        assertEquals("65.2", plan.getJSONArray("steps").getJSONObject(0).getJSONObject("review").s("value"))
+        actions.single("atlas.editRecord", obj("id" to id, "value" to "66"))
+        try {
+            actions.validateProposedPlan(plan)
+            fail("Stale review must require a new review")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message.orEmpty().contains("记录已变化"))
+        }
+        assertEquals("66", db.facts(metricId).single().s("value"))
+    }
     @Test fun backupRoundTripPreservesHistory(){val id=metric();actions.single("atlas.record",obj("metricId" to id,"value" to "65.5","date" to "2026-11-04"));val out=StringWriter();db.export(out);db.import(StringReader(out.toString()).buffered());assertEquals("65.5",db.facts(id).first().s("value"));assertTrue(db.query("SELECT * FROM atlas_operations").isNotEmpty())}
     @Test fun cacheInvalidatesAfterHistoricalCorrection(){
         val id=metric("CHANGE","SUM");val r=actions.single("atlas.record",obj("metricId" to id,"value" to "10","date" to "2026-11-01"));assertEquals("10",db.aggregate(id,"2026-11-01","2026-11-30").s("value"));val fact=r.getJSONObject("steps").getJSONObject("result").s("id")
