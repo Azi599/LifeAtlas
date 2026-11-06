@@ -162,6 +162,7 @@ class Actions(val store:AtlasStore) {
                             .put("_schemaRevision", metric?.optLong("revision", 1) ?: 1)
                         val proposedValue = if (args.has("value")) {
                             val raw = args.s("value").takeIf { it.isNotBlank() }?.let(::decimal)
+                            if (raw != null) evidence?.requireEditQuantity(raw, args.s("unit").ifBlank { config.s("unit") })
                             if (raw != null) normalizedValue(raw, proposedFields, config) else null
                         } else value
                         step.put("review", obj("title" to metric?.s("title"), "date" to row.s("local_date"),

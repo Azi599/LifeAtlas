@@ -110,7 +110,7 @@ class LanguageAcceptanceTest {
                 go("分析")
                 val picker = rule.onNodeWithText("选择指标：请选择")
                 picker.performScrollTo().performClick()
-                rule.onNodeWithText("学习时间").performScrollTo().performClick()
+                rule.onNode(hasText("学习时间") and hasAnyAncestor(isDialog())).performScrollTo().performClick()
                 if (yesterday.month != today.month) {
                     rule.onNodeWithText("分析月份 YYYY-MM").performScrollTo().performTextReplacement(yesterday.toString().take(7))
                     hideKeyboard()
@@ -189,7 +189,7 @@ class LanguageAcceptanceTest {
             scenario("navigation", "打开分析页，我要看看统计。") {
                 show("选择指标：请选择")
                 rule.onNodeWithText("选择指标：请选择").performClick()
-                rule.onNodeWithText("晨间体重").performScrollTo().performClick()
+                rule.onNode(hasText("晨间体重") and hasAnyAncestor(isDialog())).performScrollTo().performClick()
                 rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("trend-chart"))
                 rule.onNodeWithTag("trend-chart").assertIsDisplayed()
             }
@@ -320,7 +320,7 @@ class LanguageAcceptanceTest {
         rule.onNodeWithText("确认执行").performScrollTo().assertIsNotEnabled()
         rule.onNodeWithTag("plan-record-$index").performScrollTo()
         rule.onNodeWithText("记到：请选择").performScrollTo().performClick()
-        rule.onNodeWithText(title).performScrollTo().performClick()
+        rule.onNode(hasText(title) and hasAnyAncestor(isDialog())).performScrollTo().performClick()
         rule.onNodeWithText("记到：$title").assertExists()
         evidence.put("metricSelectedInUi", true)
     }
@@ -350,14 +350,18 @@ class LanguageAcceptanceTest {
 
     private fun go(tab: String) {
         hideKeyboard()
-        rule.onNode(hasText(tab) and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick) { it() }
+        val item = hasText(tab) and hasClickAction() and hasAnyAncestor(hasTestTag("atlas-navigation"))
+        rule.waitUntil(10000) { rule.onAllNodes(item).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNode(item).performSemanticsAction(SemanticsActions.OnClick) { it() }
         rule.waitForIdle()
     }
 
     private fun hideKeyboard() {
         rule.activity.runOnUiThread {
             rule.activity.window.insetsController?.hide(WindowInsets.Type.ime())
+            val token = rule.activity.currentFocus?.windowToken
             rule.activity.currentFocus?.clearFocus()
+            rule.activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.hideSoftInputFromWindow(token, 0)
         }
         rule.waitUntil(10000) {
             ViewCompat.getRootWindowInsets(rule.activity.window.decorView)
