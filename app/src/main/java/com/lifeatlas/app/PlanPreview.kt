@@ -69,6 +69,13 @@ import java.time.LocalDate
                         }
                         HorizontalDivider()
                     }
+                } else if(step.s("actionId")=="finance.transfer") {
+                    val from=objects.firstOrNull{it.s("id")==a.s("fromMetricId")}
+                    val to=objects.firstOrNull{it.s("id")==a.s("toMetricId")}
+                    val unit=JSONObject(from?.s("config","{}") ?: "{}").s("unit").let{if(it=="CNY") "元" else it}
+                    Text("转账 · ${a.s("amount")} $unit",style=MaterialTheme.typography.titleSmall)
+                    Text("${from?.s("title") ?: "转出账户"} → ${to?.s("title") ?: "转入账户"}")
+                    Text(a.s("date"))
                 } else if(step.has("review")) {
                     val review=step.getJSONObject("review")
                     Text(actionName(step.s("actionId"))+" · "+review.s("title"),style=MaterialTheme.typography.titleSmall)

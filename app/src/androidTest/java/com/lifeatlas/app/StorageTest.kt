@@ -156,6 +156,57 @@ class StorageTest {
         assertEquals("90",query.s("minutes"))
         assertEquals(1,query.getInt("untimed"))
     }
+    @Test fun naturalLanguageAccountTransferAndProjectionUseMeasuredAnchor(){
+        fun create(title:String,role:String,unit:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,
+            "config" to obj("kind" to if(role=="balance") "SNAPSHOT" else "CHANGE","unit" to unit,"role" to role)
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val ledger=create("旅行卡流水","accountChange","CNY")
+        val savings=create("储蓄账户流水","accountChange","元")
+        val balance=create("旅行卡余额","balance","元")
+        val today=LocalDate.now()
+        actions.single("atlas.record",obj("metricId" to balance,"date" to today.minusDays(1).toString(),"value" to "200.50"))
+        actions.single("atlas.record",obj("metricId" to ledger,"date" to today.minusDays(2).toString(),"value" to "999"))
+        val plan=Offline.plan("从旅行卡转35.20元到储蓄账户",db)!!
+        assertTrue(plan.optBoolean("review"))
+        actions.validateProposedPlan(plan)
+        val receipt=actions.execute(plan,true).getJSONObject("steps").getJSONObject("s1")
+        assertEquals("35.20",receipt.s("transferAmount"))
+        val debit=db.facts(ledger).first{it.s("local_date")==today.toString()}
+        val credit=db.facts(savings).single()
+        assertEquals(debit.s("event_id"),credit.s("event_id"))
+        assertEquals("-35.20",debit.s("value"))
+        assertEquals("35.20",credit.s("value"))
+        assertTrue(db.cashflow(today.toString(),today.toString()).isEmpty())
+        val query=Offline.plan("从上一次旅行卡余额实测以来，净变动多少，现在推算余额多少？",db)!!
+        val projected=actions.execute(query).getJSONObject("steps").getJSONObject("s1")
+        assertEquals("-35.20",projected.s("netDelta"))
+        assertEquals("165.30",projected.s("value"))
+        db.undo()
+        assertEquals(1,db.facts(ledger).size)
+        assertTrue(db.facts(savings).isEmpty())
+    }
+
+    @Test fun reviewedDateCorrectionRecalculatesBothAffectedMonths() {
+        val id=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "交通支出",
+            "config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val today=LocalDate.now()
+        val nextMonth=today.withDayOfMonth(1)
+        val oldDay=nextMonth.minusDays(1).toString()
+        actions.single("atlas.record",obj("metricId" to id,"date" to oldDay,"value" to "31.20"))
+        assertEquals("31.2",db.cashflow(oldDay,oldDay).single().s("expense"))
+        val plan=Offline.plan("我有一笔交通费日期写错了，帮我改成$nextMonth",db)!!
+        actions.validateProposedPlan(plan)
+        assertTrue(plan.optBoolean("review"))
+        assertEquals(oldDay,plan.getJSONArray("steps").getJSONObject(0).getJSONObject("review").s("date"))
+        actions.execute(plan,true)
+        assertTrue(db.cashflow(oldDay,oldDay).isEmpty())
+        assertEquals("31.2",db.cashflow(nextMonth.toString(),nextMonth.toString()).single().s("expense"))
+        db.undo()
+        assertEquals("31.2",db.cashflow(oldDay,oldDay).single().s("expense"))
+        assertTrue(db.cashflow(nextMonth.toString(),nextMonth.toString()).isEmpty())
+    }
     @Test fun csvImportRejectsBadRowsAndDeduplicates(){
         val id=metric("CHANGE","SUM");val source="value,local_date\n3,2026-11-01\nbad,2026-11-01\n";val errors=StringWriter();val result=CsvCodec.import(StringReader(source),actions,"test-csv",id,"value","local_date",errors)
         assertEquals(1,result.getInt("accepted"));assertEquals(1,result.getInt("rejected"));assertEquals(1,db.facts(id).size);assertTrue(errors.toString().contains("3,"));CsvCodec.import(StringReader(source),actions,"test-csv",id,"value","local_date",StringWriter());assertEquals(1,db.facts(id).size)

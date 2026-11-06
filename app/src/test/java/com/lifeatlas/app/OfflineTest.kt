@@ -43,6 +43,27 @@ class OfflineTest {
         assertEquals("atlas.aggregate",query.getJSONArray("steps").getJSONObject(0).s("actionId"))
     }
 
+    @Test fun colloquialSpendingAndFollowUpShareTheCorrectDates() {
+        val reading=metric("reading","阅读时间","分钟","ALLOCATION")
+        val statement=Offline.plan("今儿中午饭十九块六毛，帮我记上",listOf(meals),today)!!
+        assertEquals("19.6",args(statement).s("value"))
+        val plan=Offline.plan("昨天下午茶不统计",listOf(meals,reading),today)
+        assertNull(plan)
+        val combined=Offline.plan("昨天饮料9块，晚上又看书半小时，顺便查查昨天总开销",listOf(meals,reading),today)!!
+        val steps=combined.getJSONArray("steps").objects()
+        assertEquals(listOf("atlas.record","atlas.record","finance.cashflow"),steps.map{it.s("actionId")})
+        assertEquals(listOf("2026-11-05","2026-11-05"),steps.take(2).map{it.getJSONObject("args").s("date")})
+    }
+
+    @Test fun chartRequestUsesExplicitRangeWithoutCreatingAView() {
+        val weight=metric("weight","晨间体重","kg","SNAPSHOT")
+        val plan=Offline.plan("画一张最近14天体重的折线图",listOf(weight),today)!!
+        assertEquals("atlas.chart",plan.getJSONArray("steps").getJSONObject(0).s("actionId"))
+        assertEquals("weight",args(plan).s("metricId"))
+        assertEquals("2026-10-24",args(plan).s("from"))
+        assertEquals("2026-11-06",args(plan).s("to"))
+    }
+
     @Test fun unsupportedOrUnclearRequestsCannotTurnIntoRecords() {
         assertNull(Offline.plan("昨天学习时间两公斤",listOf(study),today))
         assertNull(Offline.plan("学习时间两个小时吗？",listOf(study),today))

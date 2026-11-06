@@ -65,7 +65,30 @@ import org.json.JSONObject
                     }
                 }
             }
-            if(value.has("anchorDate"))OutlinedCard{Column(Modifier.padding(16.dp)){Text("余额 ${value.s("value","待补充")} ${value.s("unit")}");if(value.optInt("uncertainSameDayCount")>0)Text("同日先后未确定：${value.optInt("uncertainSameDayCount")} 条")}}
+            if(value.has("transferAmount")) OutlinedCard(Modifier.fillMaxWidth()){
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                    val from=objects.firstOrNull{it.s("id")==value.s("fromMetricId")}?.s("title") ?: "转出账户"
+                    val to=objects.firstOrNull{it.s("id")==value.s("toMetricId")}?.s("title") ?: "转入账户"
+                    val unit=value.s("unit").let{if(it=="CNY") "元" else it}
+                    Text("已记录转账 ${value.s("transferAmount")} $unit")
+                    Text("$from → $to")
+                    Text(value.s("date"),style=MaterialTheme.typography.bodySmall)
+                }
+            }
+            if(value.optBoolean("balanceProjection")) OutlinedCard(Modifier.fillMaxWidth()){
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                    val unit=value.s("unit").let{if(it=="CNY") "元" else it}
+                    if(value.has("reason")) Text(value.s("reason"))
+                    else {
+                        Text(value.s("value").ifBlank{"推算余额待核对"}.let{if(value.isNull("value")) it else "推算余额 $it $unit"})
+                        Text(if(value.isNull("netDelta")) "已确认净变动 ${value.s("confirmedDelta")} $unit"
+                            else "净变动 ${value.s("netDelta")} $unit")
+                        Text("实测日期 ${value.s("anchorDate")}",style=MaterialTheme.typography.bodySmall)
+                        if(value.optInt("uncertainSameDayCount")>0) Text("${value.optInt("uncertainSameDayCount")} 条同日流水先后待核对")
+                        if(value.optInt("missingCount")>0) Text("${value.optInt("missingCount")} 条流水金额待补充")
+                    }
+                }
+            }
             val id=value.s("id");if(id.isNotEmpty() && (objects.any{it.s("id")==id} || value.has("title") || value.has("pluginId")))OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onOpen(id)}){Text("打开${objects.firstOrNull{it.s("id")==id}?.s("title") ?: value.s("title","结果")}")}
         }
     }

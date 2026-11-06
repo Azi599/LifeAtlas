@@ -388,23 +388,32 @@ class Actions(val store:AtlasStore) {
             }
             "finance.balance" -> {
                 val anchorId=a.getString("snapshotMetricId");val definition=store.config(anchorId);require(definition.s("kind")=="SNAPSHOT");val to=a.s("asOf",LocalDate.now().toString());LocalDate.parse(to)
-                val anchor=store.query("SELECT * FROM atlas_facts WHERE metric_id=? AND deleted=0 AND value IS NOT NULL AND local_date<=? ORDER BY local_date DESC,occurred_at DESC,created_at DESC LIMIT 1",arrayOf(anchorId,to)).firstOrNull() ?: return obj("value" to null,"reason" to "缺少实测快照")
-                var balance=normalizedValue(decimal(anchor.s("value")),JSONObject(anchor.s("fields_json")),definition);var uncertain=BigDecimal.ZERO;var uncertainCount=0;var missingCount=0
+                val anchor=store.query("SELECT * FROM atlas_facts WHERE metric_id=? AND deleted=0 AND value IS NOT NULL AND local_date<=? ORDER BY local_date DESC,occurred_at DESC,created_at DESC LIMIT 1",arrayOf(anchorId,to)).firstOrNull() ?: return obj("balanceProjection" to true,"value" to null,"reason" to "缺少实测余额")
+                val measured=normalizedValue(decimal(anchor.s("value")),JSONObject(anchor.s("fields_json")),definition)
+                var balance=measured;var uncertain=BigDecimal.ZERO;var uncertainCount=0;var missingCount=0
                 val changes=a.getJSONArray("changeMetricIds");require((0 until changes.length()).map{changes.getString(it)}.distinct().size==changes.length()){"账户变化指标重复"};for(i in 0 until changes.length()){
-                    val id=changes.getString(i);val c=store.config(id);require(c.s("kind")=="CHANGE" && c.s("unit")==definition.s("unit")){"账户变化必须为同单位的变化指标"}
+                    val id=changes.getString(i);val c=store.config(id);require(c.s("kind")=="CHANGE" && sameAccountUnit(c.s("unit"),definition.s("unit"))){"账户变化必须为同币种的变化指标"}
                     store.readableDatabase.rawQuery("SELECT value,fields_json,local_date,occurred_at FROM atlas_facts WHERE metric_id=? AND deleted=0 AND local_date BETWEEN ? AND ?",arrayOf(id,anchor.s("local_date"),to)).use{cursor->while(cursor.moveToNext()){
                         val relation=if(cursor.getString(2)>anchor.s("local_date")) 1 else if(anchor.s("occurred_at").isNotEmpty() && !cursor.isNull(3)) Instant.parse(cursor.getString(3)).compareTo(Instant.parse(anchor.s("occurred_at"))) else 0
                         if(relation<0)continue
                         if(cursor.isNull(0)){missingCount++;continue}
-                        val v=normalizedValue(decimal(cursor.getString(0)),JSONObject(cursor.getString(1)),c)
+                        val v=Units.convert(normalizedValue(decimal(cursor.getString(0)),JSONObject(cursor.getString(1)),c),
+                            c.s("unit"),definition.s("unit"))
                         if(relation>0) balance+=v else {uncertain+=v;uncertainCount++}
                     }}
                 }
-                return obj("value" to if(missingCount==0 && uncertainCount==0)balance.toPlainString() else null,"confirmedPart" to balance.toPlainString(),"unit" to definition.s("unit"),"anchorDate" to anchor.s("local_date"),"uncertainSameDayCount" to uncertainCount,"uncertainSameDayDelta" to uncertain.toPlainString(),"missingCount" to missingCount)
+                val complete=missingCount==0 && uncertainCount==0
+                return obj("balanceProjection" to true,"value" to balance.takeIf{complete}?.toPlainString(),
+                    "netDelta" to (balance-measured).takeIf{complete}?.toPlainString(),"confirmedDelta" to (balance-measured).toPlainString(),
+                    "confirmedPart" to balance.toPlainString(),"unit" to definition.s("unit"),"anchorDate" to anchor.s("local_date"),"uncertainSameDayCount" to uncertainCount,"uncertainSameDayDelta" to uncertain.toPlainString(),"missingCount" to missingCount)
             }
             "finance.transfer" -> {
-                val from=a.getString("fromMetricId");val to=a.getString("toMetricId");require(from!=to);val f=store.config(from);val t=store.config(to);require(f.s("kind")=="CHANGE" && t.s("kind")=="CHANGE" && f.s("unit")==t.s("unit")){"转账需要同币种的变化指标"}
-                val amount=decimal(a.getString("amount"));require(amount>BigDecimal.ZERO);val e=event(raw,date=a.getString("date"));record(obj("metricId" to from,"value" to (-amount).toPlainString(),"date" to a.getString("date"),"eventId" to e,"fields" to obj("flow" to "transfer","transferGroup" to e)),raw,false);record(obj("metricId" to to,"value" to amount.toPlainString(),"date" to a.getString("date"),"eventId" to e,"fields" to obj("flow" to "transfer","transferGroup" to e)),raw,false);return obj("eventId" to e,"netChange" to "0")
+                val from=a.getString("fromMetricId");val to=a.getString("toMetricId");require(from!=to);val f=store.config(from);val t=store.config(to);require(f.s("kind")=="CHANGE" && t.s("kind")=="CHANGE" && sameAccountUnit(f.s("unit"),t.s("unit"))){"转账需要同币种的变化指标"}
+                val amount=decimal(a.getString("amount"));require(amount>BigDecimal.ZERO)
+                val credit=Units.convert(amount,f.s("unit"),t.s("unit"))
+                val e=event(raw,date=a.getString("date"));record(obj("metricId" to from,"value" to (-amount).toPlainString(),"date" to a.getString("date"),"eventId" to e,"fields" to obj("flow" to "transfer","transferGroup" to e)),raw,false);record(obj("metricId" to to,"value" to credit.toPlainString(),"date" to a.getString("date"),"eventId" to e,"fields" to obj("flow" to "transfer","transferGroup" to e)),raw,false)
+                return obj("eventId" to e,"netChange" to "0","transferAmount" to amount.toPlainString(),"unit" to f.s("unit"),
+                    "fromMetricId" to from,"toMetricId" to to,"date" to a.getString("date"))
             }
             "atlas.capabilities" -> {val all=JSONObject(catalog);store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'").forEach{row->val m=JSONObject(row.s("manifest"));(m.optJSONArray("actions") ?: JSONArray()).objects().forEach{all.put("${m.s("id")}.${it.s("id")}",it)}};return obj("actions" to all)}
             "atlas.navigate" -> return obj("page" to a.s("page","spaces"),"objectId" to a.s("objectId"))
@@ -421,6 +430,8 @@ class Actions(val store:AtlasStore) {
             }
         }
     }
+    private fun sameAccountUnit(from:String,to:String):Boolean =
+        Units.currency(from)==Units.currency(to)
     private fun pluginImpact(steps:JSONArray):JSONArray {
         val result=JSONArray()
         steps.objects().forEach{step->val manifest=step.optJSONObject("args")?.optJSONObject("manifest") ?: return@forEach;val plugin=manifest.s("id")
