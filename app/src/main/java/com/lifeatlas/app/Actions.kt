@@ -495,7 +495,11 @@ class Actions(val store:AtlasStore) {
     private fun indexFields(f:JSONObject) {
         val fields=JSONObject(f.s("fields_json"));store.query("SELECT id,field_id FROM atlas_fields WHERE fact_id=?",arrayOf(f.s("id"))).filter{!fields.has(it.s("field_id"))}.forEach{store.remove("atlas_fields",it.s("id"))};fields.keys().forEach{k->store.put("atlas_fields",obj("id" to "${f.s("id")}:$k","fact_id" to f.s("id"),"field_id" to k,"value" to fields.s(k),"type" to if(fields.s(k).toBigDecimalOrNull()!=null) "decimal" else "text"))}
     }
-    private fun install(m:JSONObject,upgrade:Boolean):JSONObject {
+    private fun install(manifest:JSONObject,upgrade:Boolean):JSONObject {
+        val sandbox=manifest.s("id").startsWith("sandbox.")
+        val m=if(sandbox) sandboxPluginTemplate(manifest).apply{
+            if(manifest.has("historyMode")) put("historyMode",manifest.getString("historyMode"))
+        } else manifest
         manifestValid(m);val plugin=m.getString("id");val existing=store.query("SELECT * FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC",arrayOf(plugin));require(upgrade==existing.isNotEmpty()) {if(upgrade) "插件尚未安装" else "插件已存在，请选择升级"}
         (m.optJSONArray("requires") ?: JSONArray()).objects().forEach{dependency->require(dependency.s("pluginId")!=plugin);val installed=store.query("SELECT version FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE' ORDER BY version DESC LIMIT 1",arrayOf(dependency.s("pluginId"))).firstOrNull();require(installed!=null && installed.optInt("version")>=dependency.optInt("minVersion",1)){"缺少插件依赖 ${dependency.s("pluginId")}"}}
         val dependencies=store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'").map{JSONObject(it.s("manifest"))}.associate{it.s("id") to (it.optJSONArray("requires") ?: JSONArray()).objects().map{r->r.s("pluginId")}}.toMutableMap()
@@ -504,7 +508,17 @@ class Actions(val store:AtlasStore) {
         fun visit(id:String){if(id in visited)return;require(visiting.add(id)){"插件依赖形成循环"};dependencies[id].orEmpty().forEach(::visit);visiting.remove(id);visited.add(id)}
         visit(plugin)
         val version=m.optInt("version",1);require(existing.isEmpty() || version>existing.first().getInt("version")){"版本号必须递增"}
-        val parent=if(existing.isEmpty()) dispatch("atlas.createObject",obj("type" to "PROJECT","title" to m.getString("title"),"pluginId" to plugin)).getString("id") else store.query("SELECT id FROM atlas_objects WHERE plugin_id=? AND type='PROJECT'",arrayOf(plugin)).first().s("id")
+        val parent=if(existing.isEmpty()) {
+            val workspace=if(sandbox) {
+                val id="atlas-sandbox-workspace"
+                val current=store.one("atlas_objects",id)
+                if(current==null) dispatch("atlas.createObject",obj("id" to id,"type" to "WORKSPACE","title" to "测试区"))
+                else require(current.s("type")=="WORKSPACE" && current.optInt("archived")==0){"请恢复测试区"}
+                id
+            } else null
+            dispatch("atlas.createObject",obj("type" to "PROJECT","title" to m.getString("title"),
+                "pluginId" to plugin,"parentId" to workspace)).getString("id")
+        } else store.query("SELECT id FROM atlas_objects WHERE plugin_id=? AND type='PROJECT'",arrayOf(plugin)).first().s("id")
         val old=store.query("SELECT * FROM atlas_objects WHERE plugin_id=? AND type='METRIC'",arrayOf(plugin)).associateBy{JSONObject(it.s("config")).s("key")};val ids=linkedMapOf<String,String>()
         m.getJSONArray("metrics").objects().forEach {c->val key=c.getString("key");val prev=old[key]
             if(prev==null) ids[key]=dispatch("atlas.createObject",obj("type" to "METRIC","title" to c.getString("title"),"parentId" to parent,"pluginId" to plugin,"config" to c)).getString("id")

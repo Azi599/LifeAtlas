@@ -114,6 +114,10 @@ internal fun PinnedAnalysisCard(
     val metrics=(manifest.optJSONArray("metrics") ?: JSONArray()).objects();var key by remember(manifest.toString()){mutableStateOf(metrics.firstOrNull()?.s("key") ?: "")};var value by remember{mutableStateOf("")};var fields by remember{mutableStateOf<Map<String,String>>(emptyMap())}
     val metric=metrics.firstOrNull{it.s("key")==key}
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        if(manifest.s("id").startsWith("sandbox.")) {
+            Text("测试区",style=MaterialTheme.typography.titleSmall)
+            Text("页面与工作流仅可访问此功能包内的指标",style=MaterialTheme.typography.bodyMedium)
+        }
         Pick("表单预览",metrics.map{it.s("key") to it.s("title")},key){key=it;fields=emptyMap();value=""}
         if(metric!=null){OutlinedTextField(value,{value=it},label={Text("数值 · ${metric.s("unit")}")},modifier=Modifier.fillMaxWidth());(metric.optJSONArray("fields") ?: JSONArray()).objects().forEach{f->DynamicField(f,fields[f.s("id")] ?: ""){fields=fields+(f.s("id") to it)}}}
     }

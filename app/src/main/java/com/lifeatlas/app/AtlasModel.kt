@@ -151,7 +151,38 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     }
     fun restoreRecovery(name:String)=work("正在恢复") {val file=java.io.File(getApplication<Application>().filesDir,name);require(file.parentFile!!.canonicalFile==getApplication<Application>().filesDir.canonicalFile && file.name.startsWith("before-"));file.bufferedReader().use(store::import);obj("message" to "恢复完成")}
     fun exportErrors(uri:Uri)=work("正在导出异常记录") {val f=java.io.File(getApplication<Application>().filesDir,"import-errors.csv");require(f.exists()){ "暂无导入异常报告" };getApplication<Application>().contentResolver.openOutputStream(uri)!!.use{out->f.inputStream().use{it.copyTo(out)}};obj("message" to "异常报告已导出")}
-    fun importPlugin(uri:Uri)=work("正在读取功能包") {val text=getApplication<Application>().contentResolver.openInputStream(uri)!!.bufferedReader().use{it.readText()};require(text.length<1_000_000);val m=JSONObject(text);actions.manifestValid(m);actions.single(if(store.query("SELECT id FROM atlas_plugins WHERE plugin_id=?",arrayOf(m.s("id"))).isEmpty()) "atlas.installPlugin" else "atlas.updatePlugin",obj("manifest" to m),"安装功能包")}
+    fun importPlugin(uri:Uri,sandbox:Boolean=false)=work("正在读取功能包") {
+        val content=getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()
+            ?: error("无法读取功能包文件")
+        val text=content.use { reader ->
+            val buffer=CharArray(4096)
+            buildString {
+                var size=reader.read(buffer)
+                while(size>0) {
+                    require(length+size<=1_000_000) {"功能包文件过大"}
+                    append(buffer,0,size)
+                    size=reader.read(buffer)
+                }
+            }
+        }
+        val original=JSONObject(text)
+        actions.manifestValid(original)
+        val manifest=if(sandbox) sandboxPluginTemplate(original) else original
+        val existing=store.query("SELECT version FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC LIMIT 1",
+            arrayOf(manifest.s("id"))).firstOrNull()
+        require(existing==null || manifest.optInt("version",1)>existing.optInt("version")){"已安装相同或更高版本"}
+        actions.single(if(existing==null) "atlas.installPlugin" else "atlas.updatePlugin",obj("manifest" to manifest),
+            if(sandbox) "核对测试功能包" else "核对功能包")
+    }
+    fun exportPlugin(uri:Uri,pluginId:String)=work("正在导出模板") {
+        val row=store.query("SELECT manifest FROM atlas_plugins WHERE plugin_id=? ORDER BY version DESC LIMIT 1",arrayOf(pluginId))
+            .firstOrNull() ?: error("功能包不存在")
+        val template=portablePluginTemplate(JSONObject(row.s("manifest")))
+        val resolver=getApplication<Application>().contentResolver
+        val output=resolver.openOutputStream(uri)?.bufferedWriter() ?: error("无法保存模板")
+        output.use{it.write(template.toString(2))}
+        obj("message" to "模板已导出","notice" to true)
+    }
     fun history(metric:String?,from:String,to:String,offset:Int)=work("正在查询") {from.takeIf{it.isNotBlank()}?.let(LocalDate::parse);to.takeIf{it.isNotBlank()}?.let(LocalDate::parse);require(from.isBlank() || to.isBlank() || from<=to){"开始日期晚于结束日期"};historyMetric=metric;historyFrom=from;historyTo=to;historyOffset=offset;obj("message" to "查询完成")}
     suspend fun summary(metric:String,from:String,to:String):JSONObject=withContext(Dispatchers.IO) {store.aggregate(metric,from,to)}
     suspend fun chart(metric:String,from:String,to:String):List<JSONObject> = withContext(Dispatchers.IO) {store.dailySeries(metric,from,to)}

@@ -182,6 +182,32 @@ class StorageTest {
         assertEquals(3,db.one("atlas_layout",view)!!.getInt("position"))
         assertEquals(original,db.facts(metric).single().s("id"))
     }
+    @Test fun portableTemplateOmitsFactsAndInstallsUnderAnIsolatedWorkspace() {
+        val manifest=obj("id" to "notebook.example","title" to "标本手账","version" to 1,
+            "metrics" to JSONArray().put(obj("key" to "leaves","title" to "叶片数","kind" to "SNAPSHOT",
+                "unit" to "片","privateData" to "private-metric-value")),
+            "records" to JSONArray().put("private-history-value"))
+        actions.single("atlas.installPlugin",obj("manifest" to manifest),confirmed=true)
+        val existing=db.metrics().single().s("id")
+        actions.single("atlas.record",obj("metricId" to existing,"date" to "2026-08-02","value" to "14"))
+        val template=portablePluginTemplate(manifest)
+        assertFalse(template.toString().contains("private-"))
+        val sandbox=sandboxPluginTemplate(template)
+        val preview=actions.single("atlas.installPlugin",obj("manifest" to sandbox))
+        assertEquals("PREVIEW",preview.s("status"))
+        assertEquals(1,db.metrics().size)
+        val result=actions.execute(preview.getJSONObject("plan"),true).getJSONObject("steps").getJSONObject("result")
+        val project=db.one("atlas_objects",result.s("id"))!!
+        val workspace=db.one("atlas_objects",project.s("parent_id"))!!
+        assertEquals("测试区",workspace.s("title"))
+        val sandboxMetric=result.getJSONObject("metricIds").s("leaves")
+        assertNotEquals(existing,sandboxMetric)
+        assertTrue(db.facts(sandboxMetric).isEmpty())
+        assertEquals("14",db.facts(existing).single().s("value"))
+        val unsafe=template.copyJson().put("workflows",JSONArray().put(obj("triggerMetricKey" to "leaves",
+            "steps" to JSONArray().put(obj("actionId" to "atlas.record","args" to obj("metricId" to existing)))))
+        assertThrows(IllegalArgumentException::class.java){sandboxPluginTemplate(unsafe)}
+    }
     @Test fun financeTransferAndAnchorRules(){
         val balance=metric();val flows=metric("CHANGE","SUM");val other=metric("CHANGE","SUM")
         actions.single("atlas.record",obj("metricId" to balance,"value" to "1000","date" to "2026-11-02"));actions.single("atlas.record",obj("metricId" to flows,"value" to "999","date" to "2026-11-01"));actions.single("atlas.record",obj("metricId" to flows,"value" to "25","date" to "2026-11-03"))

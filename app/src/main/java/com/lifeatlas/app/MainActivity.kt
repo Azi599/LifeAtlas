@@ -42,14 +42,23 @@ class MainActivity:ComponentActivity() {
     private lateinit var vm:AtlasModel
     private var csv=false
     private var errorExport=false
+    private var sandboxImport=false
+    private var pluginToExport:String?=null
     private var csvUri by mutableStateOf<Uri?>(null)
     private val export=registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")){it?.let{if(errorExport)vm.exportErrors(it) else vm.export(it,csv)}}
     private val csvPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()){csvUri=it}
     private val restore=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.restore(it)}}
-    private val plugin=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.importPlugin(it)}}
+    private val plugin=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.importPlugin(it,sandboxImport)}}
+    private val pluginExport=registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri->
+        val id=pluginToExport
+        pluginToExport=null
+        if(uri!=null && id!=null) vm.exportPlugin(uri,id)
+    }
     private val image=registerForActivityResult(ActivityResultContracts.OpenDocument()){it?.let{vm.addImage(it)}}
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
+        sandboxImport=savedInstanceState?.getBoolean("sandboxImport") ?: false
+        pluginToExport=savedInstanceState?.getString("pluginToExport")
         enableEdgeToEdge()
         vm=ViewModelProvider(this)[AtlasModel::class.java]
         setContent {
@@ -76,21 +85,31 @@ class MainActivity:ComponentActivity() {
                     onCsv={csvPicker.launch(arrayOf("text/*","application/csv","*/*"))},
                     onErrors={errorExport=true;export.launch("LifeAtlas-import-errors.csv")},
                     onRestore={restore.launch(arrayOf("*/*"))},
-                    onPlugin={plugin.launch(arrayOf("application/json","text/plain","*/*"))},
+                    onPlugin={sandboxImport=false;plugin.launch(arrayOf("application/json","text/plain","*/*"))},
+                    onSandboxPlugin={sandboxImport=true;plugin.launch(arrayOf("application/json","text/plain","*/*"))},
+                    onPluginExport={id->pluginToExport=id;pluginExport.launch("$id.lifeatlas.json")},
                     onImage={image.launch(arrayOf("image/*"))}
                 )
                 csvUri?.let{uri->val state by vm.ui.collectAsState();CsvImportDialog(state.objects,onDismiss={csvUri=null},onImport={metric,value,date->vm.importCsv(uri,metric,value,date);csvUri=null})}
             }
         }
     }
+    override fun onSaveInstanceState(outState:Bundle) {
+        outState.putBoolean("sandboxImport",sandboxImport)
+        outState.putString("pluginToExport",pluginToExport)
+        super.onSaveInstanceState(outState)
+    }
 }
 
-@Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit) {
+@Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,
+    onPlugin:()->Unit,onSandboxPlugin:()->Unit,onPluginExport:(String)->Unit,onImage:()->Unit) {
     val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var showImageText by remember{mutableStateOf(false)}
     var spaceReturn by rememberSaveable{mutableStateOf("settings")}
     val command=state.draft;var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
     val listState=rememberLazyListState()
+    val notices=remember{SnackbarHostState()}
+    LaunchedEffect(state.result){if(state.result?.optBoolean("notice")==true) notices.showSnackbar(state.status)}
     LaunchedEffect(page,selected,state.historyOffset){listState.scrollToItem(0)}
     val scope=rememberCoroutineScope()
     fun editById(id:String){scope.launch {val row=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.query("SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE f.id=?",arrayOf(id)).firstOrNull()?.also{f->f.put("value",resolvedRecordValue(f.s("value").takeIf{it.isNotEmpty()}?.let(::decimal),JSONObject(f.s("fields_json")),vm.store.config(f.s("metric_id")))?.toPlainString() ?: JSONObject.NULL)}};editingFact=row}}
@@ -131,6 +150,7 @@ class MainActivity:ComponentActivity() {
     val currentTab = if (page == "spaces") "settings" else page
     AtlasBackdrop { Scaffold(
         containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onBackground,
+        snackbarHost={SnackbarHost(notices)},
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
             Text(when(page) {"workspace" -> "Life Atlas";"spaces" -> chosen?.s("title") ?: "空间";else -> tabs.firstOrNull{it.first==page}?.second ?: "Life Atlas"},style=MaterialTheme.typography.headlineSmall)
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -222,8 +242,31 @@ class MainActivity:ComponentActivity() {
                     }
                     item("settings-panel"){SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin,onSubpage={settingsSubpage=it})}
                     if(!settingsSubpage) {
-                    item{Text("插件中心",style=MaterialTheme.typography.titleLarge);TextButton(onClick={pluginWizard=true}){Text("创建功能包")}}
-                    items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${pluginState(p.s("status"))}");TextButton(onClick={vm.action("atlas.rollbackPlugin",obj("pluginId" to p.s("plugin_id")),"回退插件")}){Text("回退")};TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
+                    item{
+                        Text("插件中心",style=MaterialTheme.typography.titleLarge)
+                        ActionRow {
+                            OutlinedButton(onClick={pluginWizard=true}){Text("创建功能包")}
+                            OutlinedButton(onClick=onSandboxPlugin){Text("导入到测试区")}
+                        }
+                    }
+                    items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}) { plugin ->
+                        OutlinedCard(Modifier.fillMaxWidth()){
+                            Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                                val manifest=JSONObject(plugin.s("manifest"))
+                                val id=plugin.s("plugin_id")
+                                val active=plugin.s("status")=="ACTIVE"
+                                Text(manifest.s("title"),style=MaterialTheme.typography.titleMedium)
+                                Text("版本 ${plugin.optInt("version")} · ${pluginState(plugin.s("status"))}")
+                                ActionRow {
+                                    OutlinedButton(onClick={onPluginExport(id)}){Text("导出模板")}
+                                    if(plugin.optInt("version")>1) OutlinedButton(onClick={vm.action("atlas.rollbackPlugin",
+                                        obj("pluginId" to id),"回退插件")}){Text("回退")}
+                                    OutlinedButton(onClick={vm.action("atlas.setPluginStatus",
+                                        obj("pluginId" to id,"enabled" to !active),"切换插件")}){Text(if(active) "停用" else "启用")}
+                                }
+                            }
+                        }
+                    }
                     item{Text("工作流",style=MaterialTheme.typography.titleLarge);TextButton(onClick={workflowDialog=true}){Text("新建工作流")}}
                     items(state.workflows,key={it.s("id")}){w->Column{Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text(w.s("title"),Modifier.weight(1f));Switch(w.optInt("enabled")==1,{vm.action("atlas.setWorkflowStatus",obj("id" to w.s("id"),"enabled" to it),"更新工作流")})};TextButton(onClick={vm.action("atlas.deleteWorkflow",obj("id" to w.s("id")),"删除工作流")}){Text("删除")}}}
                     item{Text("应用扩展与更新",style=MaterialTheme.typography.titleLarge);TextButton(onClick={buildDialog=true}){Text("新增原生能力")}}
