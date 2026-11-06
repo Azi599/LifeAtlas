@@ -47,4 +47,17 @@ class InputEvidenceTest {
         assertEquals("2026-11-05", args.s("from"))
         assertEquals("2026-11-06", args.s("to"))
     }
+
+    @Test fun modelTimeZoneMayBeOmittedAndReportUsesCalendarDates() {
+        val bindings = PlanningContext(obj())
+        val supplied = obj("zone" to "", "from" to "2026-11-05T00:00:00+08:00",
+            "to" to "2026-11-06T23:59:59")
+        val record = bindings.bindArgs("atlas.record", supplied)
+        assertFalse(record.has("zone"))
+        assertEquals("2026-11-05T00:00:00+08:00", record.s("from"))
+        val report = bindings.bindArgs("atlas.report", supplied)
+        assertEquals("2026-11-05", report.s("from"))
+        assertEquals("2026-11-06", report.s("to"))
+        assertEquals("unknown", bindings.bindArgs("atlas.query", obj("from" to "unknown")).s("from"))
+    }
 }

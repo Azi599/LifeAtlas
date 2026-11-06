@@ -382,13 +382,13 @@ class Actions(val store:AtlasStore) {
         val metric=a.getString("metricId");val owner=store.one("atlas_objects",metric) ?: error("指标不存在");require(owner.s("type")=="METRIC" && owner.optInt("archived")==0)
         val plugin=owner.s("plugin_id");if(plugin.isNotEmpty()) require(store.query("SELECT id FROM atlas_plugins WHERE plugin_id=? AND status='ACTIVE'",arrayOf(plugin)).isNotEmpty()) {"请先启用插件"}
         val c=JSONObject(owner.s("config"));val kind=c.getString("kind");val date=a.s("date",LocalDate.now().toString());LocalDate.parse(date)
-        val fields=(a.optJSONObject("fields") ?: JSONObject()).copyJson();if(a.s("sourceExcerpt").isNotBlank())fields.put("_sourceExcerpt",a.s("sourceExcerpt").take(4000));fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",owner.optLong("revision",1));val defs=c.optJSONArray("fields") ?: JSONArray()
+        val fields=(a.optJSONObject("fields") ?: JSONObject()).copyJson();if(a.s("sourceExcerpt").isNotBlank())fields.put("_sourceExcerpt",a.s("sourceExcerpt").take(4000));fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",owner.optLong("revision",1))
         validateFields(c,fields,a.optBoolean("allowIncomplete"));if(a.optBoolean("allowIncomplete"))fields.put("_incomplete",true)
         val value = recordValue(a, fields, c)
         if (c.s("role") in setOf("income","expense","balance","accountChange") && value != null) {
             fields.put("_minorUnits", value.movePointRight(value.scale()).toBigIntegerExact().toString())
         }
-        val start=a.s("startAt").ifEmpty{null};val end=a.s("endAt").ifEmpty{null};val occurred=a.s("occurredAt").ifEmpty{null};val zone=a.s("zone",ZoneId.systemDefault().id);ZoneId.of(zone)
+        val start=a.s("startAt").ifEmpty{null};val end=a.s("endAt").ifEmpty{null};val occurred=a.s("occurredAt").ifEmpty{null};val zone=a.s("zone").ifBlank{ZoneId.systemDefault().id};ZoneId.of(zone)
         if(start!=null){val startDate=Instant.parse(start).atZone(ZoneId.of(zone)).toLocalDate().toString();require(startDate==date || (c.s("role")=="sleep" && date<=startDate)){"时段开始日期与发生日期不一致"}}
         if(occurred!=null) {require(Instant.parse(occurred).atZone(ZoneId.of(zone)).toLocalDate().toString()==date){"发生时刻与日期不一致"}}
         val e=a.s("eventId").ifEmpty{event(raw,date=date,occurred=occurred,zone=zone)};require(store.one("atlas_events",e)!=null);val id=a.s("recordId").ifEmpty{uid()};require(id.length<=120 && store.one("atlas_facts",id)==null){"记录标识已存在"};val t=now()
