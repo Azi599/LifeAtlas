@@ -17,11 +17,12 @@ elif [ "$api_level" = "36" ]; then
     adb shell wm density 160
     adb shell wm size 840x1100
 fi
-if [ "$api_level" = "35" ]; then
-    ./gradlew :app:connectedStandaloneDebugAndroidTest --stacktrace
-else
-    ./gradlew :app:connectedStandaloneDebugAndroidTest \
-        -Pandroid.testInstrumentationRunnerArguments.class=com.lifeatlas.app.UiTest,com.lifeatlas.app.ThemeTest,com.lifeatlas.app.CaptureTest,com.lifeatlas.app.StorageTest \
-        -Pandroid.testInstrumentationRunnerArguments.notAnnotation=androidx.test.filters.LargeTest --stacktrace
-fi
+./gradlew :app:connectedStandaloneDebugAndroidTest \
+    -Pandroid.testInstrumentationRunnerArguments.notAnnotation=androidx.test.filters.LargeTest --stacktrace
 bash scripts/screenshots.sh
+if [ "$api_level" = "35" ]; then
+    mkdir -p screenshots/functional-test-results
+    cp -a app/build/outputs/androidTest-results/. screenshots/functional-test-results/
+    ./gradlew :app:connectedStandaloneDebugAndroidTest \
+        -Pandroid.testInstrumentationRunnerArguments.annotation=androidx.test.filters.LargeTest --stacktrace
+fi

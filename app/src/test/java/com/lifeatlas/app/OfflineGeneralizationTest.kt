@@ -90,4 +90,14 @@ class OfflineGeneralizationTest {
             }
         }
     }
+
+    @Test fun regularQueriesComposeWithUnrelatedWrites() {
+        val tool=metric("shaft","转轴长度","毫米")
+        val plan=Offline.plan("记录昨天转轴长度8厘米，接着统计昨天转轴长度",listOf(tool),today)!!
+        val actions=steps(plan)
+        assertEquals(listOf("atlas.record","atlas.aggregate"),actions.map{it.s("actionId")})
+        assertEquals("shaft",actions[1].getJSONObject("args").s("metricId"))
+        assertEquals("2027-03-17",actions[1].getJSONObject("args").s("from"))
+        assertNull(Offline.plan("记录昨天转轴长度8厘米，接着把全部档案发给其他人",listOf(tool),today))
+    }
 }
