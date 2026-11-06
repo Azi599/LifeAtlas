@@ -70,6 +70,32 @@ class StorageTest {
         assertEquals(listOf(late,note,early),db.timeline(null,"","",0).map { it.s("id") })
     }
 
+    @Test fun cashflowSeparatesMissingAmountsAndTransfers() {
+        val date="2026-10-13"
+        fun account(title:String,role:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,"config" to obj("kind" to "CHANGE","unit" to "元","role" to role,"aggregate" to "SUM")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val expense=account("测试支出","expense")
+        val income=account("测试收入","income")
+        fun save(metric:String,value:String?,flow:String=""){
+            actions.single("atlas.record",obj("metricId" to metric,"date" to date,"value" to value,"fields" to obj("flow" to flow)))
+        }
+        save(expense,"20.25")
+        save(expense,"2.50","refund")
+        save(income,"40")
+        save(income,"100","transfer")
+        val complete=db.cashflow(date,date).single()
+        assertEquals("40",complete.s("income"))
+        assertEquals("17.75",complete.s("expense"))
+        assertEquals("22.25",complete.s("net"))
+        save(expense,null)
+        val partial=db.cashflow(date,date).single()
+        assertEquals(1L,partial.optLong("missingCount"))
+        assertEquals("17.75",partial.s("expense"))
+        assertTrue(partial.isNull("net"))
+        assertTrue(db.cashflow("2026-10-12","2026-10-12").isEmpty())
+    }
+
     @Test fun proposedEditCannotReuseAStaleReview() {
         val metricId = metric()
         val result = actions.single("atlas.record", obj("metricId" to metricId, "value" to "65.2", "date" to "2026-11-05"))

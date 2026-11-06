@@ -102,8 +102,9 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
                 val attached = state.value.image != null
                 require(!attached || text.isNotBlank()) { "图片未识别出文字，请换一张清晰图片" }
                 val offline = if (attached) OfflineReceipt.plan(text,input,store.metrics()) else Offline.plan(input, store)
-                if (offline==null) planInput(input.ifBlank { "整理图片中的记录供我确认" },text,attached)
-                else localResult(offline)
+                if (offline!=null) localResult(offline)
+                else if(Offline.explicitlyOffline(input)) obj("message" to "有部分指令需要补充。原文已保留。")
+                else planInput(input.ifBlank { "整理图片中的记录供我确认" },text,attached)
             }
             if (result.s("status") == "DONE") clearSubmittedDraft(input)
             result

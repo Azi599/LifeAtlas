@@ -48,6 +48,7 @@ class Actions(val store:AtlasStore) {
         "time.pause" to "暂停 args timerId",
         "time.resume" to "恢复 args timerId",
         "time.stop" to "结束计时并保存有起止时间的分段记录 args timerId",
+        "finance.cashflow" to "查询收支和净现金流 args from,to,metricIds?；排除转账，列出缺失金额",
         "finance.balance" to "推算账户余额 args snapshotMetricId,changeMetricIds:[id],asOf?；只累计锚点后明确发生的变化，同日未知先后列为未确定",
         "finance.transfer" to "转账 args fromMetricId,toMetricId,amount,date；同币种两条关联变化，净额0",
         "atlas.capabilities" to "列出宿主及动态能力",
@@ -347,6 +348,12 @@ class Actions(val store:AtlasStore) {
             "atlas.setWorkflowStatus"->{val row=store.one("atlas_workflows",a.getString("id")) ?: error("工作流不存在");store.put("atlas_workflows",row.put("enabled",if(a.getBoolean("enabled"))1 else 0));return obj("id" to row.s("id"))}
             "atlas.deleteWorkflow"->{store.remove("atlas_workflows",a.getString("id"));return obj("message" to "工作流已删除")}
             "time.start","time.pause","time.resume","time.stop" -> return timer(action,a)
+            "finance.cashflow" -> {
+                val metrics = a.optJSONArray("metricIds")?.let{items->(0 until items.length()).map(items::getString).toSet()}.orEmpty()
+                val from=a.getString("from");val to=a.getString("to")
+                return obj("cashflow" to JSONArray(store.cashflow(from,to,metrics)),"from" to from,"to" to to,
+                    "onlyExpense" to a.optBoolean("onlyExpense"),"includeBasis" to a.optBoolean("includeBasis"))
+            }
             "finance.balance" -> {
                 val anchorId=a.getString("snapshotMetricId");val definition=store.config(anchorId);require(definition.s("kind")=="SNAPSHOT");val to=a.s("asOf",LocalDate.now().toString());LocalDate.parse(to)
                 val anchor=store.query("SELECT * FROM atlas_facts WHERE metric_id=? AND deleted=0 AND value IS NOT NULL AND local_date<=? ORDER BY local_date DESC,occurred_at DESC,created_at DESC LIMIT 1",arrayOf(anchorId,to)).firstOrNull() ?: return obj("value" to null,"reason" to "缺少实测快照")

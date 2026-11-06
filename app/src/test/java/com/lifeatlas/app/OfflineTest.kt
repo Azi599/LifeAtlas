@@ -130,4 +130,12 @@ class OfflineTest {
         val duration=java.time.Duration.between(java.time.Instant.parse(overnight.s("startAt")),java.time.Instant.parse(overnight.s("endAt")))
         assertEquals(100L,duration.toMinutes())
     }
+    @Test fun localCompoundCanReadItsOwnWritesWithoutAProvider() {
+        val plan=Offline.plan("离线：新建“周记”目录，记今天阅读页数8页，再列出今天记录",listOf(pages),today)!!
+        val steps=plan.getJSONArray("steps").objects()
+        assertEquals(listOf("atlas.createObject","atlas.record","atlas.query"),steps.map{it.s("actionId")})
+        val total=Offline.plan("今天一共支出多少？",listOf(meals),today)!!
+        assertEquals("finance.cashflow",total.getJSONArray("steps").getJSONObject(0).s("actionId"))
+        assertTrue(args(total).optBoolean("onlyExpense"))
+    }
 }
