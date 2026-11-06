@@ -188,10 +188,10 @@ class MainActivity:ComponentActivity() {
                     state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                 }
                 "settings" -> {
-                    if(!settingsSubpage) item {
+                    if(!settingsSubpage) item("space-entry") {
                         OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理")}
                     }
-                    item{SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin,onSubpage={settingsSubpage=it})}
+                    item("settings-panel"){SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin,onSubpage={settingsSubpage=it})}
                     if(!settingsSubpage) {
                     item{Text("插件中心",style=MaterialTheme.typography.titleLarge);TextButton(onClick={pluginWizard=true}){Text("创建功能包")}}
                     items(state.plugins.distinctBy{it.s("plugin_id")},key={it.s("id")}){p->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){val m=JSONObject(p.s("manifest"));Text(m.s("title"),style=MaterialTheme.typography.titleMedium);Text("版本 ${p.optInt("version")} · ${pluginState(p.s("status"))}");TextButton(onClick={vm.action("atlas.rollbackPlugin",obj("pluginId" to p.s("plugin_id")),"回退插件")}){Text("回退")};TextButton(onClick={vm.action("atlas.setPluginStatus",obj("pluginId" to p.s("plugin_id"),"enabled" to (p.s("status")!="ACTIVE")),"切换插件")}){Text(if(p.s("status")=="ACTIVE") "停用" else "启用")}}}}
