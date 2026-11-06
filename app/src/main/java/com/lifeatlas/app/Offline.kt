@@ -71,6 +71,9 @@ object Offline {
     private val namedRange = Regex("^($dateWord)($intervalClock)开始(.+?)[,，]($dateWord)($intervalClock)结束$")
     private val listing = Regex("^把($dateWord)(?:的)?(?:所有)?(.+?)记录列出来(?:让我核对)?$")
     private val dailySpend = Regex("^(?:查查|查一下|查询)?($dateWord)([^,，?？]*?)(?:一共|总共)?(?:花了|支出)(?:多少钱|多少|合计)$|^(?:查查|查一下|查询)?($dateWord)总开销$")
+    private val deleteDuplicatePair=Regex("^(?:请)?把($dateWord)(?:的)?两笔(?:金额相同|相同金额)的?支出(?:都)?删(?:掉|除)(?:[,，]不用问)?$")
+    private val purgeHistory=Regex("^(?:(?:请|帮我)?(?:把)?(?:我(?:的)?)?(?:所有|全部)(?:历史)?(?:记录|数据)(?:都)?(?:永久删除|清空)|(?:永久删除|清空)(?:我(?:的)?)?(?:所有|全部)(?:历史)?(?:记录|数据))(?:[,，].*)?$")
+    private val transferAudit=Regex("^(?:检查|核对|确认)(?:刚才的?|最近的?)?这?笔转账是否被(?:统计|算|计)成(?:收入或消费|收入或支出)$")
     private val monthCash = Regex("^(?:汇报|统计)([0-9]{1,2})月收入[,、]支出[,、]净现金流(?:[,，]逐项说明口径)?(?:[;；]没数据不许猜)?$")
     private val dailyExpenseChart = Regex("^(?:给我|画|生成|展示)(?:一张)?(本月|这个月|上月|上个月|[0-9]{1,2}月)每天的?(?:支出|开销)(?:趋势图|折线图)(?:[,，].*(?:没记录|缺失|没有记录).*)?$")
     private val listDay = Regex("^(?:列出|查看)($dateWord)(?:的)?(?:所有)?记录$")
@@ -86,9 +89,11 @@ object Offline {
     private val weightedTotal = Regex("^假设有(\\d+)次")
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
     private val rangeLead = Regex("^(最近[0-9]{1,2}天|近[0-9]{1,2}天|最近七天|近七天|本月|这个月|上月|上个月|今天|昨天|前天)")
+    private val spendingShare=Regex("^(?:查询|查看|统计)?(.+?)占(?:全部|总)支出的?(?:百分之多少|比例是多少|占比是多少)$")
     private val drawChart = Regex("^(?:请|帮我)?(?:画|生成|展示)(?:一张|一个)?(.+?)(?:的)?(折线图|柱状图|趋势图)$")
     private val correlation = Regex("^(?:看看|查看|分析|计算)(.+?)(?:有没有相关性|是否相关|的相关性)(?:[,，](?:但)?不要把相关说成因果)?$")
     private val measuredBalance = Regex("^(.+?)(?:现在)?(?:的)?(?:实际余额|实测余额)(?:是|为|有)?(.+)$")
+    private val refundedPurchase=Regex("^($dateWord)(?:买东西|购物|买了东西|消费)(.+?)[,，](?:卖家|商家)?(?:又)?(?:退了|退款)(.+)$")
     private val transfer = Regex("^从(.+?)(?:转账|转)(.+?)(?:转到|到|至)(.+)$")
     private val balanceQuery = Regex("^(?:自|从)上一次(.+?)余额实测以来[,，]净变动多少[,，]现在推算余额多少$")
     private val number = "半|[+-]?(?:[0-9]+(?:\\.[0-9]+)?|[零〇一二两三四五六七八九十百千万]+(?:点[零〇一二两三四五六七八九0-9]+)?)"
@@ -123,6 +128,39 @@ object Offline {
         }
         val request = text.removeSuffix("?").replaceFirst(Regex("^我(?=今天|昨天|今早|今晚)"),"")
             .replace(Regex("(?:[,，](?:但忘了几点|没有具体开始时间|给我记上|帮我记上))$"),"")
+        if(purgeHistory.matches(compact(request))) {
+            return question(input,"请先核对删除范围",listOf(obj("title" to "打开时间轴",
+                "plan" to command(input,"atlas.navigate",obj("page" to "history")))))
+        }
+        deleteDuplicatePair.matchEntire(compact(request))?.let { match ->
+            val day=parseDate(match.groupValues[1],today) ?: return null
+            return command(input,"finance.removeDuplicatePair",obj("date" to day.toString()))
+        }
+        if(transferAudit.matches(compact(request))) return command(input,"finance.recentTransferAudit",JSONObject())
+        refundedPurchase.matchEntire(compact(request))?.let { match ->
+            val (date,spentText,refundText)=match.destructured
+            val day=parseDate(date,today)?.toString() ?: return null
+            val spent=parseQuantity(spentText) ?: return null
+            val refund=parseQuantity(refundText) ?: return null
+            if(Units.currency(spent.unit)!="CNY" || Units.currency(refund.unit)!="CNY") return null
+            val expense=Units.convert(spent.value,spent.unit,"元")
+            val returned=Units.convert(refund.value,refund.unit,"元")
+            if(expense.signum()<=0 || returned.signum()<=0 || returned>expense)
+                return question(input,"请核对支出与退款金额")
+            val candidates=metrics.filter{metric->
+                val config=JSONObject(metric.s("config"))
+                config.s("role")=="expense" && Units.currency(config.s("unit"))=="CNY" && acceptsScalar(config)
+            }
+            if(candidates.isEmpty()) return question(input,"请选择支出和退款的归属")
+            return choose(input,"支出和退款记到哪里？",candidates.map{metric->
+                val id=metric.s("id")
+                val plan=command(input,"atlas.record",obj("metricId" to id,"value" to expense.toPlainString(),"unit" to "元","date" to day))
+                plan.getJSONArray("steps").put(obj("stepId" to "s2","actionId" to "atlas.record",
+                    "args" to obj("metricId" to id,"value" to returned.toPlainString(),"unit" to "元","date" to day,
+                        "eventId" to obj("\$ref" to "s1.eventId"),"fields" to obj("flow" to "refund"))))
+                metric to plan
+            })
+        }
         dailySpend.matchEntire(compact(request))?.let { match ->
             val date=match.groupValues[1].ifBlank{match.groupValues[3]}
             val title=match.groupValues[2]
@@ -136,6 +174,18 @@ object Offline {
             val month=match.groupValues[1].toIntOrNull()?.takeIf{it in 1..12} ?: return null
             val period=java.time.YearMonth.of(today.year,month)
             return command(input,"finance.cashflow",obj("from" to period.atDay(1).toString(),"to" to period.atEndOfMonth().toString(),"includeBasis" to true))
+        }
+        spendingShare.matchEntire(compact(request))?.let { match ->
+            val subject=match.groupValues[1]
+            val range=rangeLead.find(subject) ?: return question(input,"要查看哪段日期？")
+            val (from,to)=dateRange(range.value,today) ?: return null
+            val targets=namedMetrics(subject.drop(range.value.length).trimStart('的'),metrics)
+                .filter{JSONObject(it.s("config")).s("role")=="expense"}
+            if(targets.isEmpty()) return question(input,"要查看哪个支出类别？")
+            return choose(input,"要查看哪个支出类别？",targets.map{metric->
+                metric to command(input,"finance.spendingShare",obj("metricIds" to JSONArray(listOf(metric.s("id"))),
+                    "from" to from.toString(),"to" to to.toString()))
+            })
         }
         dailyExpenseChart.matchEntire(compact(request))?.let { match ->
             val range=match.groupValues[1]

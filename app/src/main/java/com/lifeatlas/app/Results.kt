@@ -91,6 +91,18 @@ import org.json.JSONObject
                     Text(value.s("date"),style=MaterialTheme.typography.bodySmall)
                 }
             }
+            if(value.optBoolean("transferAudit") || value.optBoolean("duplicateRemoval")) {
+                Text(value.s("message"),style=MaterialTheme.typography.titleMedium)
+            }
+            if(value.optBoolean("spendingShare")) OutlinedCard(Modifier.fillMaxWidth()){
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                    val percentage=value.s("percentage").toBigDecimalOrNull()?.setScale(2,java.math.RoundingMode.HALF_UP)
+                    Text(percentage?.let{"支出占比 ${it.stripTrailingZeros().toPlainString()}%"} ?: value.s("reason"),
+                        style=MaterialTheme.typography.titleMedium)
+                    if(percentage!=null) Text("${value.s("selected")} 元 / ${value.s("total")} 元")
+                    Text("${value.s("from")} — ${value.s("to")}",style=MaterialTheme.typography.bodySmall)
+                }
+            }
             if(value.optBoolean("balanceProjection")) OutlinedCard(Modifier.fillMaxWidth()){
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
                     val unit=value.s("unit").let{if(it=="CNY") "元" else it}

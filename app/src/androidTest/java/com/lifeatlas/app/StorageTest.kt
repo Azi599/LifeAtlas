@@ -122,6 +122,41 @@ class StorageTest {
         assertEquals(1,summary.getInt("emptyDays"))
         assertEquals(1,summary.getInt("incompleteDays"))
     }
+    @Test fun matchingExpensesDeleteAndUndoAsOneOperation() {
+        val id=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "日用支出",
+            "config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val date=LocalDate.now().toString()
+        fun save(value:String,flow:String=""){
+            actions.single("atlas.record",obj("metricId" to id,"date" to date,"value" to value,"fields" to obj("flow" to flow)))
+        }
+        save("15.50")
+        save("15.5")
+        save("15.50","refund")
+        val plan=Offline.plan("把今天的两笔金额相同的支出删除",db)!!
+        actions.execute(plan)
+        assertEquals("15.50",db.facts(id).single().s("value"))
+        db.undo(expectedChange="delete")
+        assertEquals(3,db.facts(id).size)
+        save("8")
+        save("8")
+        actions.execute(Offline.plan("把今天的两笔金额相同的支出删除",db)!!)
+        assertEquals(5,db.facts(id).size)
+    }
+
+    @Test fun refundAndPurchaseShareOneEventAndAffectNetSpending() {
+        val id=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "日用支出",
+            "config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val date=LocalDate.now().toString()
+        actions.execute(Offline.plan("今天购物40块，商家退款12块5",db)!!)
+        val rows=db.facts(id)
+        assertEquals(setOf("-40.00","12.50"),rows.map{it.s("value")}.toSet())
+        assertEquals(1,rows.map{it.s("event_id")}.distinct().size)
+        val share=db.spendingShare(date,date,setOf(id))
+        assertEquals("27.5",share.s("total"))
+        assertEquals(0,share.s("percentage").toBigDecimal().compareTo("100".toBigDecimal()))
+    }
     @Test fun correlationUsesOnlyCompletePairedDays() {
         fun create(title:String):String = actions.single("atlas.createObject",obj(
             "type" to "METRIC","title" to title,"config" to obj("kind" to "CHANGE","unit" to "次","aggregate" to "SUM")
@@ -326,6 +361,7 @@ class StorageTest {
         assertEquals("-35.20",debit.s("value"))
         assertEquals("35.20",credit.s("value"))
         assertTrue(db.cashflow(today.toString(),today.toString()).isEmpty())
+        assertTrue(db.recentTransferAudit().s("message").contains("排除"))
         val query=Offline.plan("从上一次旅行卡余额实测以来，净变动多少，现在推算余额多少？",db)!!
         val projected=actions.execute(query).getJSONObject("steps").getJSONObject("s1")
         assertEquals("-35.20",projected.s("netDelta"))

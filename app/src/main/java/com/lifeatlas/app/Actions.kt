@@ -52,6 +52,8 @@ class Actions(val store:AtlasStore) {
         "time.stop" to "结束计时并保存有起止时间的分段记录 args timerId",
         "finance.cashflow" to "查询收支和净现金流 args from,to,metricIds?；排除转账，列出缺失金额",
         "finance.dailySpending" to "每日支出趋势 args from,to；未记录或金额缺失的日期留空",
+        "finance.spendingShare" to "支出占比 args from,to,metricIds；缺失金额或总额不大于零时不给比例",
+        "finance.recentTransferAudit" to "核对最近保存的转账是否排除于收支",
         "finance.balance" to "推算账户余额 args snapshotMetricId,changeMetricIds:[id],asOf?；只累计锚点后明确发生的变化，同日未知先后列为未确定",
         "finance.transfer" to "转账 args fromMetricId,toMetricId,amount,date；同币种两条关联变化，净额0",
         "atlas.capabilities" to "列出宿主及动态能力",
@@ -397,6 +399,22 @@ class Actions(val store:AtlasStore) {
             "time.start","time.pause","time.resume","time.stop" -> return timer(action,a)
             "time.occupied" -> return store.occupancy(a)
             "finance.dailySpending" -> return store.dailySpending(a.getString("from"),a.getString("to"))
+            "finance.spendingShare" -> {
+                val metrics=a.getJSONArray("metricIds")
+                require(metrics.length() in 1..60)
+                return store.spendingShare(a.getString("from"),a.getString("to"),
+                    (0 until metrics.length()).map(metrics::getString).toSet())
+            }
+            "finance.recentTransferAudit" -> return store.recentTransferAudit()
+            "finance.removeDuplicatePair" -> {
+                val date=a.getString("date")
+                val groups=store.duplicateExpenseGroups(date)
+                val pair=groups.singleOrNull()?.takeIf{it.size==2}
+                if(pair==null) return obj("duplicateRemoval" to true,"message" to if(groups.isEmpty()) "这一天没有两笔金额相同的支出"
+                    else "找到多条金额相同的支出，请在时间轴核对后选择删除")
+                pair.forEach{dispatch("atlas.deleteRecord",obj("id" to it.s("id")))}
+                return obj("duplicateRemoval" to true,"message" to "已删除两笔 ${pair.first().s("amount")} 元支出","date" to date)
+            }
             "finance.cashflow" -> {
                 val metrics = a.optJSONArray("metricIds")?.let{items->(0 until items.length()).map(items::getString).toSet()}.orEmpty()
                 val from=a.getString("from");val to=a.getString("to")

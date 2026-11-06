@@ -18,7 +18,8 @@ data class AiConfig(val endpoint: String, val key: String, val model: String) {
 class Planner(private val actions: Actions) {
     private val readTools = setOf(
         "atlas.query", "atlas.aggregate", "atlas.capabilities", "atlas.correlation",
-        "atlas.searchObjects", "finance.balance", "finance.cashflow", "finance.dailySpending", "time.occupied", "atlas.getTheme"
+        "atlas.searchObjects", "finance.balance", "finance.cashflow", "finance.dailySpending", "finance.spendingShare",
+        "finance.recentTransferAudit", "time.occupied", "atlas.getTheme"
     )
 
     fun plan(config: AiConfig, input: String, context: JSONObject): JSONObject {
