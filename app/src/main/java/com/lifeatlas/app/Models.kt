@@ -25,6 +25,10 @@ fun validateMetric(config:JSONObject) {
     val method=config.s("aggregate",if(config.s("kind")=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")
     require(method in aggregateMethods) { "不支持的统计规则：$method" }
     require(config.s("unit").length<=30) { "单位过长" }
+    val minimum=config.s("minimum").takeIf{it.isNotBlank()}?.let(::decimal)
+    val maximum=config.s("maximum").takeIf{it.isNotBlank()}?.let(::decimal)
+    require(minimum==null || maximum==null || minimum<=maximum) {"最小值不能大于最大值"}
+    if(!config.isNull("decimalPlaces")) require((config.s("decimalPlaces").toIntOrNull() ?: -1) in 0..8) {"小数位数应为 0 至 8"}
     require(config.isNull("fields") || config.optJSONArray("fields") != null) {
         "自定义字段请按数组提供，每项包含 id、title 和 type"
     }
@@ -134,7 +138,17 @@ internal fun recordValue(args: JSONObject, fields: JSONObject, config: JSONObjec
         value = value ?: duration
     }
     require(config.s("kind") != "ALLOCATION" || value == null || value >= BigDecimal.ZERO) { "时长不能为负" }
+    value?.let{validateMetricValue(config,it)}
     return value
+}
+
+internal fun validateMetricValue(config:JSONObject,value:BigDecimal) {
+    config.s("minimum").takeIf{it.isNotBlank()}?.let{require(value>=decimal(it)){"数值低于最小值 $it"}}
+    config.s("maximum").takeIf{it.isNotBlank()}?.let{require(value<=decimal(it)){"数值高于最大值 $it"}}
+    val maxPlaces=config.optInt("decimalPlaces",-1)
+    if(maxPlaces>=0) require(value.stripTrailingZeros().scale()<=maxPlaces){
+        if(maxPlaces==0) "请输入整数" else "最多可填写 $maxPlaces 位小数"
+    }
 }
 
 fun retainCalculationHistory(before:JSONObject,next:JSONObject,revision:Long,mode:String,hasRecords:Boolean) {

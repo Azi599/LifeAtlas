@@ -238,6 +238,23 @@ class StorageTest {
         assertEquals(1,db.metrics().size)
         assertEquals(1,db.facts().size)
     }
+    @Test fun customMetricConstraintsApplyToRecordsAndEdits(){
+        val folder=actions.single("atlas.createObject",obj("type" to "PROJECT","title" to "实验日志"))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val plan=Offline.plan("给「实验日志」增加「试管数量」指标，单位支，只能填非负整数",db)!!
+        val metric=actions.execute(plan).getJSONObject("steps").getJSONObject("s1").s("id")
+        assertEquals(folder,db.one("atlas_objects",metric)!!.s("parent_id"))
+        fun record(value:String):JSONObject = actions.single("atlas.record",
+            obj("metricId" to metric,"date" to "2026-09-15","value" to value))
+        assertThrows(IllegalArgumentException::class.java){record("-1")}
+        assertThrows(IllegalArgumentException::class.java){record("0.5")}
+        record("7")
+        val fact=db.facts(metric).single().s("id")
+        assertThrows(IllegalArgumentException::class.java){
+            actions.single("atlas.editRecord",obj("id" to fact,"value" to "7.1"))
+        }
+        assertEquals("7",db.facts(metric).single().s("value"))
+    }
     @Test fun naturalLanguageAccountTransferAndProjectionUseMeasuredAnchor(){
         fun create(title:String,role:String,unit:String):String = actions.single("atlas.createObject",obj(
             "type" to "METRIC","title" to title,

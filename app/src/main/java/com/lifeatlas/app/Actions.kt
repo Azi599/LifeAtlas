@@ -20,7 +20,7 @@ class Actions(val store:AtlasStore) {
         "atlas.installBuild" to "验证并安装构建结果 args id；由 Android 系统确认安装",
         "atlas.checkForUpdate" to "查询更新源 args feed?",
         "atlas.installUpdate" to "验证并安装更新 args feed?",
-        "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?(income/expense/balance/accountChange/sleep),decimalPlaces?,fields:[{id,title,type,required,options?}],expression?}",
+        "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?(income/expense/balance/accountChange/sleep),minimum?,maximum?,decimalPlaces?,fields:[{id,title,type,required,options?}],expression?}",
         "atlas.updateObject" to "修改或移动对象 args id,title?,parentId?,config?,historyMode?(recalculate/preserve),archived?；指标语义不得改变",
         "atlas.relate" to "关联对象 args fromId,toId,kind",
         "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",
@@ -261,7 +261,9 @@ class Actions(val store:AtlasStore) {
                     if(matches.isNotEmpty()) {
                         val existing=matches.singleOrNull() ?: error("有多个同名指标，请选择要使用的指标")
                         val before=JSONObject(existing.s("config"))
-                        require(listOf("kind","unit","role").all{before.s(it)==config.s(it)}) {"同名指标的记录方式不同，请先核对"}
+                        require(listOf("kind","unit","role","minimum","maximum","decimalPlaces").all{before.s(it)==config.s(it)}) {
+                            "同名指标的记录方式不同，请先核对"
+                        }
                         return obj("id" to existing.s("id"),"title" to title)
                     }
                 }
@@ -322,6 +324,9 @@ class Actions(val store:AtlasStore) {
                     if(r.s("start_at").isNotEmpty() && a.has("value") && !a.has("startAt") && !a.has("endAt")){val duration=Units.convert(secondsBetween(Instant.parse(r.s("start_at")),Instant.parse(r.s("end_at"))),"s",c.s("unit"));require(r.s("value").isNotEmpty() && decimal(r.s("value")).compareTo(duration)==0){"时长与原时段不一致，请修改起止时间或选择仅保留时长"}}
                     if(a.has("occurredAt")){r.put("occurred_at",Instant.parse(a.getString("occurredAt")).toString());r.put("precision","INSTANT")}
                     if(r.s("occurred_at").isNotEmpty())require(Instant.parse(r.s("occurred_at")).atZone(ZoneId.of(r.s("zone"))).toLocalDate().toString()==r.s("local_date")){"发生日期与原时刻不一致"}
+                    if(a.has("value") || recompute || a.has("startAt") || a.has("endAt")) {
+                        r.s("value").takeIf{it.isNotBlank()}?.let{validateMetricValue(c,decimal(it))}
+                    }
                     r.put("fields_json",fields.toString())
                 } else r.put("deleted",if(action=="atlas.deleteRecord") 1 else 0)
                 r.put("updated_at",now());r.put("revision",r.getLong("revision")+1);store.put("atlas_facts",r);indexFields(r)

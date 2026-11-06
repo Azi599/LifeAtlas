@@ -19,6 +19,11 @@ import java.time.LocalDate
 }
 @Composable fun ObjectDialog(parent:String?,objects:List<JSONObject>,onDismiss:()->Unit,onSave:(String,String,JSONObject)->Unit) {
     var type by remember{mutableStateOf("PROJECT")};var name by remember{mutableStateOf("")};var kind by remember{mutableStateOf("SNAPSHOT")};var unit by remember{mutableStateOf("")};var aggregate by remember{mutableStateOf("LAST_SNAPSHOT")};var role by remember{mutableStateOf("")};var fields by remember{mutableStateOf<List<JSONObject>>(emptyList())};var addField by remember{mutableStateOf(false)}
+    var limits by remember{mutableStateOf(false)}
+    var minimum by remember{mutableStateOf("")}
+    var maximum by remember{mutableStateOf("")}
+    var decimals by remember{mutableStateOf("")}
+    var error by remember{mutableStateOf("")}
     AlertDialog(onDismissRequest=onDismiss,title={Text("新建${objects.firstOrNull{it.s("id")==parent}?.s("title")?.let{" · $it"} ?: ""}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
         Pick("类型",listOf("WORKSPACE","FOLDER","PROJECT","METRIC","DASHBOARD").map{it to typeName(it)},type){type=it}
         OutlinedTextField(name,{name=it},label={Text("名称")},modifier=Modifier.fillMaxWidth())
@@ -28,8 +33,25 @@ import java.time.LocalDate
             Pick("统计方式",aggregateMethods.map{it to methodName(it)},aggregate){aggregate=it}
             Pick("专业规则",listOf("" to "通用指标","income" to "收入（正值）","expense" to "支出（负值）","balance" to "账户余额快照","accountChange" to "账户流水","sleep" to "睡眠时长"),role){role=it;when(it){"balance"->{kind="SNAPSHOT";aggregate="LAST_SNAPSHOT";unit="CNY"};"income","expense","accountChange"->{kind="CHANGE";aggregate="SUM";unit="CNY"};"sleep"->{kind="ALLOCATION";aggregate="SUM";unit="小时"}}}
             fields.forEach{Text("${it.s("title")} · ${it.s("type")}")};TextButton(onClick={addField=true}){Text("添加自定义字段")}
+            OutlinedButton(onClick={limits=!limits}){Text(if(limits) "收起数值限制" else "数值限制")}
+            if(limits) {
+                OutlinedTextField(minimum,{minimum=it;error=""},label={Text("最小值")},modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(maximum,{maximum=it;error=""},label={Text("最大值")},modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(decimals,{decimals=it;error=""},label={Text("最多小数位")},modifier=Modifier.fillMaxWidth())
+            }
+            if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error)
         }
-    }},confirmButton={TextButton(enabled=name.isNotBlank(),onClick={val c=if(type=="METRIC") obj("kind" to kind,"unit" to unit,"aggregate" to aggregate,"role" to role,"fields" to JSONArray(fields)) else JSONObject();onSave(type,name,c)}){Text("创建")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+    }},confirmButton={Button(enabled=name.isNotBlank(),onClick={
+        val config=if(type=="METRIC") obj("kind" to kind,"unit" to unit,"aggregate" to aggregate,"role" to role,"fields" to JSONArray(fields))
+            .apply {
+                minimum.trim().takeIf{it.isNotEmpty()}?.let{put("minimum",it)}
+                maximum.trim().takeIf{it.isNotEmpty()}?.let{put("maximum",it)}
+                decimals.trim().takeIf{it.isNotEmpty()}?.let{put("decimalPlaces",it)}
+            } else JSONObject()
+        val validation=runCatching{if(type=="METRIC") validateMetric(config)}
+        if(validation.isSuccess) onSave(type,name,config)
+        else error=validation.exceptionOrNull()?.message ?: "请核对数值限制"
+    }){Text("创建")}},dismissButton={OutlinedButton(onClick=onDismiss){Text("取消")}})
     if(addField) FieldDialog(onDismiss={addField=false},onSave={fields=fields+it;addField=false})
 }
 @Composable fun FieldDialog(onDismiss:()->Unit,onSave:(JSONObject)->Unit) {
