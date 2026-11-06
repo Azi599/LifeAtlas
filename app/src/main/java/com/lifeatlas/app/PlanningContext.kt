@@ -45,7 +45,7 @@ internal class PlanningContext(private val original: JSONObject) {
         if (action == "atlas.createObject") result.remove("id")
         else if (result.has("id")) result.put("id", bindReference(result.get("id")))
         if (result.opt("zone") is String && result.s("zone").isBlank()) result.remove("zone")
-        if (action in setOf("atlas.query", "atlas.aggregate", "atlas.report")) {
+        if (action in setOf("atlas.query", "atlas.aggregate", "atlas.report", "finance.cashflow")) {
             for (key in listOf("from", "to")) {
                 val value = result.s(key)
                 val day = runCatching { OffsetDateTime.parse(value).toLocalDate() }.getOrNull()
@@ -108,7 +108,7 @@ internal class PlanningContext(private val original: JSONObject) {
                 key == "fields" -> value
                 key == "parentId" && value == "null" -> JSONObject.NULL
                 key in referenceKeys -> bindReference(value)
-                key in setOf("metrics", "changeMetricIds") && value is JSONArray -> JSONArray().apply {
+                key in setOf("metrics", "changeMetricIds", "metricIds") && value is JSONArray -> JSONArray().apply {
                     for (index in 0 until value.length()) {
                         val item = value.get(index)
                         put(if (item is JSONObject) bindFields(item) else bindReference(item))

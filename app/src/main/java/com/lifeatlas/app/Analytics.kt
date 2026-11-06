@@ -101,29 +101,9 @@ private fun monthlyOverview(store: AtlasStore, month: YearMonth): MonthlyOvervie
         GROUP BY f.metric_id
         ORDER BY count DESC, o.title, f.metric_id
     """.trimIndent(),arrayOf(from,to))
-    val finance = store.metrics().map { it to JSONObject(it.s("config")) }
-        .filter { (_, config) -> config.s("role") in setOf("income","expense") }
-        .groupBy { (_, config) -> Units.currency(config.s("unit")) }
-    val spending = mutableListOf<ChartSlice>()
-    val cash = finance.mapNotNull { (currency,group) ->
-        var income = BigDecimal.ZERO
-        var expense = BigDecimal.ZERO
-        var missing = 0L
-        var hasRecords = false
-        group.forEach { (metric,config) ->
-            val stats = store.aggregate(metric.s("id"),from,to,"SUM")
-            missing += stats.optLong("missingCount")
-            hasRecords = hasRecords || stats.optLong("recordCount") > 0
-            val raw = stats.s("value").toBigDecimalOrNull() ?: BigDecimal.ZERO
-            val amount = if (currency=="CNY") Units.convert(raw,config.s("unit"),"CNY") else raw
-            if (config.s("role")=="income") income += amount else {
-                expense -= amount
-                if (currency=="CNY" && amount.signum()<0) spending.add(ChartSlice(metric.s("title"),amount.negate()))
-            }
-        }
-        if (!hasRecords) null else obj("unit" to if(currency=="CNY") "元" else currency,
-            "income" to income.toPlainString(),"expense" to expense.toPlainString(),
-            "net" to if(missing>0) null else (income-expense).toPlainString())
+    val cash = store.cashflow(from,to)
+    val spending = cash.filter{it.s("unit")=="元"}.flatMap { group ->
+        group.optJSONArray("spending")?.objects().orEmpty().map { ChartSlice(it.s("title"),it.s("value").toBigDecimal()) }
     }
     return MonthlyOverview(counts,cash,spending.sortedByDescending { it.value })
 }
@@ -192,7 +172,8 @@ private fun CompositionPie(title: String, entries: List<ChartSlice>, unit: Strin
         snapshot?.cash?.forEach { c ->
             Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
                 Text("$month 现金流 · ${c.s("unit")}",style=MaterialTheme.typography.titleMedium)
-                Text("收入 ${c.s("income")}　支出净额 ${c.s("expense")}")
+                Text("收入 ${c.s("income","暂无数值")}　支出净额 ${c.s("expense","暂无数值")}")
+                if(c.optLong("missingCount")>0) Text("${c.optLong("missingCount")} 笔金额待补充",style=MaterialTheme.typography.bodySmall)
                 Text("净额 ${c.s("net","待补充")}",style=MaterialTheme.typography.headlineSmall)
             }}
         }
