@@ -384,16 +384,12 @@ class Actions(val store:AtlasStore) {
         val c=JSONObject(owner.s("config"));val kind=c.getString("kind");val date=a.s("date",LocalDate.now().toString());LocalDate.parse(date)
         val fields=(a.optJSONObject("fields") ?: JSONObject()).copyJson();if(a.s("sourceExcerpt").isNotBlank())fields.put("_sourceExcerpt",a.s("sourceExcerpt").take(4000));fields.put("_unitVersion",c.optInt("unitVersion",0));fields.put("_schemaRevision",owner.optLong("revision",1));val defs=c.optJSONArray("fields") ?: JSONArray()
         validateFields(c,fields,a.optBoolean("allowIncomplete"));if(a.optBoolean("allowIncomplete"))fields.put("_incomplete",true)
-        var value=a.s("value").ifEmpty{null}?.let(::decimal)
-        if(value!=null && a.s("unit").isNotEmpty()) value=Units.convert(value,a.s("unit"),c.s("unit"))
-        if(c.has("expression")) value=Expressions.eval(c.getJSONObject("expression"),fields.keys().asSequence().mapNotNull{k->fields.s(k).toBigDecimalOrNull()?.let{k to it}}.toMap())
-        if(fields.s("flow")!="transfer") {if(c.s("role")=="expense") value=if(fields.s("flow")=="refund") value?.abs() else value?.abs()?.negate();if(c.s("role")=="income") value=value?.abs()}
-        if(c.s("role") in setOf("income","expense","balance","accountChange") && value!=null) {
-            val places=c.optInt("decimalPlaces",2);require(places in 0..8);val exact=value.setScale(places,java.math.RoundingMode.UNNECESSARY);fields.put("_minorUnits",exact.movePointRight(places).toBigIntegerExact().toString());value=exact
+        val value = recordValue(a, fields, c)
+        if (c.s("role") in setOf("income","expense","balance","accountChange") && value != null) {
+            fields.put("_minorUnits", value.movePointRight(value.scale()).toBigIntegerExact().toString())
         }
         val start=a.s("startAt").ifEmpty{null};val end=a.s("endAt").ifEmpty{null};val occurred=a.s("occurredAt").ifEmpty{null};val zone=a.s("zone",ZoneId.systemDefault().id);ZoneId.of(zone)
-        if(start!=null || end!=null){require(kind=="ALLOCATION" && start!=null && end!=null);require(Instant.parse(end)>=Instant.parse(start));require((Instant.parse(start).atZone(ZoneId.of(zone)).toLocalDate().toString()==date || (c.s("role")=="sleep" && date<=Instant.parse(start).atZone(ZoneId.of(zone)).toLocalDate().toString()))){"时段开始日期与发生日期不一致"};val duration=Units.convert(secondsBetween(Instant.parse(start),Instant.parse(end)),"s",c.s("unit"));if(value==null)value=duration else require(value.compareTo(duration)==0){"时长与起止区间不一致"}}
-        if(kind=="ALLOCATION") require(value==null || value>=BigDecimal.ZERO) {"时长不能为负"}
+        if(start!=null){val startDate=Instant.parse(start).atZone(ZoneId.of(zone)).toLocalDate().toString();require(startDate==date || (c.s("role")=="sleep" && date<=startDate)){"时段开始日期与发生日期不一致"}}
         if(occurred!=null) {require(Instant.parse(occurred).atZone(ZoneId.of(zone)).toLocalDate().toString()==date){"发生时刻与日期不一致"}}
         val e=a.s("eventId").ifEmpty{event(raw,date=date,occurred=occurred,zone=zone)};require(store.one("atlas_events",e)!=null);val id=a.s("recordId").ifEmpty{uid()};require(id.length<=120 && store.one("atlas_facts",id)==null){"记录标识已存在"};val t=now()
         val fact=obj("id" to id,"event_id" to e,"metric_id" to metric,"kind" to kind,"value" to value?.toPlainString(),"local_date" to date,"occurred_at" to occurred,"start_at" to start,"end_at" to end,"precision" to if(start!=null) "INTERVAL" else if(occurred!=null) "INSTANT" else "DATE","zone" to zone,"fields_json" to fields.toString(),"deleted" to 0,"revision" to 1,"created_at" to t,"updated_at" to t)

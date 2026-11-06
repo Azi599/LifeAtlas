@@ -79,15 +79,38 @@ class LanguageAcceptanceTest {
                 rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("timeline-item"))
                 show("晨间体重")
             }
-            scenario("mixed", "昨天晚饭花了18块5，另外学了半小时。没有具体开始时间，也不知道用哪个账户付的。") {
+            scenario("mixed", "昨天晚饭花了18块5，另外学了半小时。没有具体开始时间，也不知道用哪个账户付的。") { evidence ->
+                chooseMetric(study, "学习时间", "分钟", evidence)
+                confirmIfNeeded()
                 val spent = record(expense, yesterday, "-18.50")
                 val learned = record(study, yesterday, "30")
                 assertEquals("DATE", spent.s("precision"))
                 assertEquals("DATE", learned.s("precision"))
                 assertTrue(learned.isNull("start_at"))
                 assertTrue(JSONObject(spent.s("fields_json")).s("accountId").isBlank())
+                assertTrue(model.store.facts(sleep).isEmpty())
                 show("-18.50 元")
-                show("30 分钟")
+                show("${learned.s("value")} 分钟")
+                capture("mixed-receipt")
+                go("记录")
+                show("-18.50 · $yesterday")
+                show("${learned.s("value")} · $yesterday")
+                capture("mixed-history")
+                go("分析")
+                val picker = rule.onNodeWithText("选择指标：请选择")
+                picker.performScrollTo().performClick()
+                rule.onNodeWithText("学习时间").performScrollTo().performClick()
+                if (yesterday.month != today.month) {
+                    rule.onNodeWithText("分析月份 YYYY-MM").performScrollTo().performTextReplacement(yesterday.toString().take(7))
+                    hideKeyboard()
+                    rule.onNodeWithText("查看月份").performScrollTo().performClick()
+                }
+                val total = model.store.aggregate(study, yesterday.toString(), yesterday.toString()).s("value")
+                assertEquals(0, total.toBigDecimal().compareTo(30.toBigDecimal()))
+                rule.waitUntil(10000) { rule.onAllNodesWithText("$total 分钟").fetchSemanticsNodes().isNotEmpty() }
+                show("$total 分钟")
+                rule.onNodeWithTag("trend-chart").performScrollTo().assertIsDisplayed()
+                capture("mixed-analysis")
             }
             scenario("edit-history", "把昨天的晨间体重从65.2更正为64.9公斤，只改那一条。") {
                 assertNotNull("更正应先给核对", model.ui.value.pending)
@@ -98,7 +121,9 @@ class LanguageAcceptanceTest {
                 record(weight, today, "65")
                 assertEquals(1, model.store.facts(weight, yesterday.toString(), yesterday.toString()).size)
             }
-            scenario("midnight", "昨天晚上23点40分睡着，今天零点20分起来，记一下这次睡眠。") {
+            scenario("midnight", "昨天晚上23点40分睡着，今天零点20分起来，记一下这次睡眠。") { evidence ->
+                chooseMetric(sleep, "睡眠时长", "分钟", evidence)
+                confirmIfNeeded()
                 val row = record(sleep, yesterday, "40")
                 assertEquals("INTERVAL", row.s("precision"))
                 val start = java.time.Instant.parse(row.s("start_at")).atZone(ZoneId.systemDefault())
@@ -229,7 +254,7 @@ class LanguageAcceptanceTest {
         return rows.single()
     }
 
-    private fun scenario(id: String, input: String, verify: () -> Unit) {
+    private fun scenario(id: String, input: String, verify: (JSONObject) -> Unit) {
         if (selectedCases.isNotEmpty() && id !in selectedCases) return
         val evidence = obj("id" to id, "input" to input)
         val start = android.os.SystemClock.elapsedRealtime()
@@ -246,7 +271,7 @@ class LanguageAcceptanceTest {
             evidence.put("response", state.result?.takeUnless { it === before.result } ?: JSONObject.NULL)
             evidence.put("preview", state.pending ?: JSONObject.NULL)
             assertTrue(state.status, state.error.isBlank())
-            verify()
+            verify(evidence)
             evidence.put("passed", true)
         } catch (error: Throwable) {
             if (error is VirtualMachineError) throw error
@@ -260,6 +285,30 @@ class LanguageAcceptanceTest {
                 "status" to state.status, "failure" to evidence.opt("failure"), "elapsedMs" to evidence.opt("elapsedMs")).toString())
             runCatching { capture(id) }
         }
+    }
+
+    private fun chooseMetric(metricId: String, title: String, unit: String, evidence: JSONObject) {
+        val pending = model.ui.value.pending
+        if (pending == null) {
+            val steps = model.ui.value.result?.optJSONObject("steps") ?: JSONObject()
+            evidence.put("modelTargetCorrect", steps.keys().asSequence().any { steps.optJSONObject(it)?.s("metricId") == metricId })
+            return
+        }
+        val steps = pending.getJSONArray("steps").objects()
+        val candidates = steps.withIndex().filter { (_, step) ->
+            step.s("actionId") == "atlas.record" &&
+                PlanReview.unit(PlanReview.metric(pending, step.getJSONObject("args"), model.ui.value.objects)) == unit
+        }
+        val (index, proposed) = candidates.single()
+        evidence.put("modelTargetCorrect", proposed.getJSONObject("args").s("metricId") == metricId)
+        if (metricId !in PlanReview.metricChoices(proposed)) return
+        assertTrue("归属待确认时没有写入", model.store.facts(metricId).isEmpty())
+        rule.onNodeWithText("确认执行").performScrollTo().assertIsNotEnabled()
+        rule.onNodeWithTag("plan-record-$index").performScrollTo()
+        rule.onNodeWithText("记到：请选择").performScrollTo().performClick()
+        rule.onNodeWithText(title).performScrollTo().performClick()
+        rule.onNodeWithText("记到：$title").assertExists()
+        evidence.put("metricSelectedInUi", true)
     }
 
     private fun confirmIfNeeded() {

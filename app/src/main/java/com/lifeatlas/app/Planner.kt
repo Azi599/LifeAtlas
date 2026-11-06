@@ -3,6 +3,7 @@ package com.lifeatlas.app
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.LocalDate
@@ -26,6 +27,7 @@ class Planner(private val actions: Actions) {
             你是 Life Atlas 的操作规划器。今天 $today，时区 ${ZoneId.systemDefault().id}。
             只返回一个完整 JSON 对象。宿主执行操作、换算单位、计算统计。
             从上下文复制已有指标的 id。记一笔数据必须有 atlas.record。创建指标本身不会产生记录。
+            指标的活动含义要和原话一致。多个指标单位相同也不代表可互换。
             用户说了几件独立的事就分别列步骤。只做他要求的事，使用现有对象；缺少时才创建最小定义。
             新增事实用 atlas.record。只有用户明确要求更正时才用 atlas.editRecord。修改先用 atlas.query 找到真实记录 id，直接使用返回的 r 代号。改成什么不清楚就追问。
             未知时刻留空。时段的 startAt 是开始，endAt 是结束，可用 HH:mm 或含时区的 ISO 时刻。使用原句数值与单位，宿主换算。
@@ -41,8 +43,8 @@ class Planner(private val actions: Actions) {
             atlas.editRecord: id,value?,date?,fields?（对象）,occurredAt?,startAt?,endAt?,clearTime?。
             atlas.createObject: type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?,fields?}。
             kind 为 SNAPSHOT/CHANGE/ALLOCATION，字段类型 text/decimal/date/boolean/choice。记录类型只在内部使用。
-            atlas.query/atlas.aggregate: metricId,from?,to?,limit?；aggregate 指定起止日期和 method?。
-            atlas.report: title,metrics（指标 id 数组）,from,to。atlas.navigate: page（workspace/spaces/history/analytics/settings）。
+            atlas.query/atlas.aggregate: metricId,from?,to?,limit?；日期用 YYYY-MM-DD。aggregate 指定起止日期和 method?。
+            atlas.report: title,metrics（指标 id 数组）,from,to（YYYY-MM-DD）。atlas.navigate: page（workspace/spaces/history/analytics/settings）。
             atlas.createView: title,components（引用真实指标的表单、历史或图表）。财务 role 使用 income/expense/balance/accountChange。
             atlas.setAppearance: mode（light/dark/system）,compact?,themeId?。atlas.searchObjects: keyword,type?。
             atlas.installPlugin: manifest={id（字母开头）,title,version（整数）,metrics:[{key,title,kind,unit,aggregate,fields?}],screens:[{title,components:[{component:form/history/chart/summary/text/navigation,metricKey?,chart?}]}]}。
@@ -64,7 +66,7 @@ class Planner(private val actions: Actions) {
         repeat(6) {
             val response = chat(config, messages)
             try {
-                val proposed = bindings.bindPlan(parse(response))
+                val proposed = bindings.bindPlan(parsePlanObject(response))
                 if (proposed.has("steps") || proposed.has("question")) {
                     prepare(proposed, input, context, evidence)
                     return proposed
@@ -116,6 +118,8 @@ class Planner(private val actions: Actions) {
             }
         } else {
             plan.getJSONArray("steps").objects().forEach { it.remove("review") }
+            val objects = context.optJSONArray("objects")?.objects().orEmpty()
+            PlanReview.assignMetricChoices(plan, context.s("imageText").ifBlank { input }, objects)
             actions.validateProposedPlan(plan, evidence)
             if (context.optBoolean("imageImport")) {
                 PlanReview.validateImageImport(plan, context.s("imageText"))
@@ -159,5 +163,11 @@ class Planner(private val actions: Actions) {
         }
     }
 
-    fun parse(text: String): JSONObject = JSONObject(text.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
+}
+
+internal fun parsePlanObject(text: String): JSONObject {
+    val tokener = JSONTokener(text.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
+    val plan = tokener.nextValue() as? JSONObject ?: throw JSONException("需要一个操作对象")
+    require(!tokener.more()) { "请将回复整理为一个完整的操作计划" }
+    return plan
 }
