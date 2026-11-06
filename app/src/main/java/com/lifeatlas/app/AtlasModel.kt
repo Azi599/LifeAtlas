@@ -16,9 +16,9 @@ import org.json.JSONObject
 import java.time.*
 
 data class AtlasState(
-    val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val themeConfig:String=ThemeDefaults.config().toString(),val themeId:String="lavender",val objects:List<JSONObject> = emptyList(),val facts:List<JSONObject> = emptyList(),
-    val operations:List<JSONObject> = emptyList(),val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
-    val historyMetric:String="",val historyFrom:String=java.time.YearMonth.now().atDay(1).toString(),val historyTo:String=LocalDate.now().toString(),val historyOffset:Int=0,val events:List<JSONObject> = emptyList(),val builds:List<JSONObject> = emptyList(),val layouts:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
+    val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val themeConfig:String=ThemeDefaults.config().toString(),val themeId:String="lavender",val objects:List<JSONObject> = emptyList(),val timeline:List<JSONObject> = emptyList(),
+    val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
+    val historyMetric:String="",val historyFrom:String="",val historyTo:String="",val historyOffset:Int=0,val builds:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
     val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val imageLayout:String="[]",val error:String="",val draft:String=""
 )
 class AtlasModel(app:Application):AndroidViewModel(app) {
@@ -27,8 +27,8 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     private val submitting = java.util.concurrent.atomic.AtomicBoolean(false)
     private val state=MutableStateFlow(AtlasState(draft=settings.prefs.getString("draft", "").orEmpty()));val ui=state.asStateFlow()
     private var historyMetric:String?=null
-    private var historyFrom=java.time.YearMonth.now().atDay(1).toString()
-    private var historyTo=LocalDate.now().toString()
+    private var historyFrom=""
+    private var historyTo=""
     private var historyOffset=0
     val draft: String get() = state.value.draft
     init {refresh()}
@@ -44,7 +44,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         if (draft == input) saveDraft("")
     }
     fun refresh()=viewModelScope.launch(Dispatchers.IO) {load()}
-    private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,facts=store.facts(historyMetric,historyFrom,historyTo,historyOffset),events=store.historyEvents(historyMetric,historyFrom,historyTo,historyOffset),operations=store.query("SELECT * FROM atlas_operations ORDER BY created_at DESC LIMIT 40"),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),layouts=store.query("SELECT * FROM atlas_layout ORDER BY position"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
+    private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,timeline=store.timeline(historyMetric,historyFrom,historyTo,historyOffset),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
         commandMutex.withLock {
         update{it.copy(busy=true,status=title,error="")}
@@ -64,7 +64,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
             "请选择每笔记录的归属"
         }
         val result = actions.execute(command, confirmed && !fromChoice)
-        if (result.s("status") == "DONE" && command.optBoolean("ai")) {
+        if (result.s("status") == "DONE" && (command.optBoolean("ai") || command.optBoolean("local"))) {
             if (command.optBoolean("imageImport")) update { it.copy(image = null, imageText = "", imageLayout = "[]") }
             clearSubmittedDraft(command.s("rawInput"))
         }
@@ -98,13 +98,14 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
             val result = if (input.trim().startsWith("{")) {
                 actions.execute(JSONObject(input))
             } else {
-                val offline = Offline.plan(input, store)
-                if (offline != null) {
-                    actions.execute(offline)
-                } else {
-                    val text = state.value.imageText
-                    require(state.value.image == null || text.isNotBlank()) { "图片未识别出文字，请换一张清晰图片" }
-                    planInput(input.ifBlank { "整理图片中的记录供我确认" }, text, text.isNotBlank())
+                val text = state.value.imageText
+                val attached = state.value.image != null
+                require(!attached || text.isNotBlank()) { "图片未识别出文字，请换一张清晰图片" }
+                val offline = if (attached) null else Offline.plan(input, store)
+                when {
+                    offline == null -> planInput(input.ifBlank { "整理图片中的记录供我确认" },text,attached)
+                    offline.has("question") -> obj("message" to offline.s("question"),"question" to offline)
+                    else -> actions.execute(offline)
                 }
             }
             if (result.s("status") == "DONE") clearSubmittedDraft(input)
@@ -120,7 +121,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         val reading=ImageText.readDetailed(getApplication(),uri);val text=reading.text
         require(text.isNotBlank()){"未识别到清晰文字，请更换图片"}
         update{it.copy(imageText=text,imageLayout=reading.layout,status="正在整理图片记录")}
-        if(settings.ai().key.isBlank())return@work obj("message" to "文字已识别，请配置 AI 后整理记录")
+        if(!settings.ai().configured)return@work obj("message" to "文字已识别，请配置 AI 后整理记录")
         planInput(draft.ifBlank{"识别图片中的实际记录，列出数值与发生日期，供我核对保存"},text,true)
     }
     fun editImageText(text:String){update{it.copy(imageText=text,imageLayout="[]")}}
@@ -138,7 +139,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun restoreRecovery(name:String)=work("正在恢复") {val file=java.io.File(getApplication<Application>().filesDir,name);require(file.parentFile!!.canonicalFile==getApplication<Application>().filesDir.canonicalFile && file.name.startsWith("before-"));file.bufferedReader().use(store::import);obj("message" to "恢复完成")}
     fun exportErrors(uri:Uri)=work("正在导出异常记录") {val f=java.io.File(getApplication<Application>().filesDir,"import-errors.csv");require(f.exists()){ "暂无导入异常报告" };getApplication<Application>().contentResolver.openOutputStream(uri)!!.use{out->f.inputStream().use{it.copyTo(out)}};obj("message" to "异常报告已导出")}
     fun importPlugin(uri:Uri)=work("正在读取功能包") {val text=getApplication<Application>().contentResolver.openInputStream(uri)!!.bufferedReader().use{it.readText()};require(text.length<1_000_000);val m=JSONObject(text);actions.manifestValid(m);actions.single(if(store.query("SELECT id FROM atlas_plugins WHERE plugin_id=?",arrayOf(m.s("id"))).isEmpty()) "atlas.installPlugin" else "atlas.updatePlugin",obj("manifest" to m),"安装功能包")}
-    fun history(metric:String?,from:String,to:String,offset:Int)=work("正在查询") {LocalDate.parse(from);LocalDate.parse(to);require(from<=to){"开始日期晚于结束日期"};historyMetric=metric;historyFrom=from;historyTo=to;historyOffset=offset;obj("message" to "查询完成")}
+    fun history(metric:String?,from:String,to:String,offset:Int)=work("正在查询") {from.takeIf{it.isNotBlank()}?.let(LocalDate::parse);to.takeIf{it.isNotBlank()}?.let(LocalDate::parse);require(from.isBlank() || to.isBlank() || from<=to){"开始日期晚于结束日期"};historyMetric=metric;historyFrom=from;historyTo=to;historyOffset=offset;obj("message" to "查询完成")}
     suspend fun summary(metric:String,from:String,to:String):JSONObject=withContext(Dispatchers.IO) {store.aggregate(metric,from,to)}
     suspend fun chart(metric:String,from:String,to:String):List<JSONObject> = withContext(Dispatchers.IO) {store.dailySeries(metric,from,to)}
     fun installUpdate(feed:String)=action("atlas.installUpdate",obj("feed" to feed),"正在验证与下载更新")

@@ -174,7 +174,7 @@ class Actions(val store:AtlasStore) {
                 }
                 "atlas.installPlugin", "atlas.updatePlugin" -> manifestValid(args.getJSONObject("manifest"))
                 "atlas.navigate" -> require(args.s("page") in setOf("workspace", "spaces", "history", "analytics", "settings")) {
-                    "请选择首页、空间、记录、分析或我的"
+                    "请选择输入、时间轴、分析或我的"
                 }
                 "atlas.createView" -> {
                     val components = args.getJSONArray("components")
@@ -262,6 +262,24 @@ class Actions(val store:AtlasStore) {
                 row.put("revision",row.getLong("revision")+1);row.put("updated_at",now());store.put("atlas_objects",row);return obj("id" to row.s("id"))
             }
             "atlas.createEvent" -> return obj("id" to event(a.getString("text"),a.s("id").ifEmpty{uid()},a.s("date").ifEmpty{null},a.s("occurredAt").ifEmpty{null},a.s("zone",ZoneId.systemDefault().id),source="text"))
+            "atlas.editEvent" -> {
+                val event = store.one("atlas_events",a.getString("id")) ?: error("记录不存在")
+                require(event.s("source")=="text") {"请选择文字记录"}
+                val text = a.getString("text").trim()
+                require(text.isNotBlank() && text.length <= 100000) {"请填写记录内容"}
+                val date = a.s("date").takeIf { it.isNotBlank() }?.let(LocalDate::parse)
+                val time = event.s("occurred_at").takeIf { it.isNotBlank() && date != null }?.let {
+                    val old = Instant.parse(it).atZone(ZoneId.of(event.s("zone")))
+                    if (old.toLocalDate() == date) old.toInstant().toString()
+                    else old.with(java.time.temporal.ChronoField.EPOCH_DAY,date!!.toEpochDay()).toInstant().toString()
+                }
+                event.put("raw_input",text).put("local_date",date?.toString() ?: JSONObject.NULL)
+                    .put("occurred_at",time ?: JSONObject.NULL)
+                    .put("precision",if (time!=null) "INSTANT" else if (date!=null) "DATE" else "UNKNOWN")
+                    .put("updated_at",now())
+                store.put("atlas_events",event)
+                return obj("id" to event.s("id"))
+            }
             "atlas.deleteObject" -> return dispatch("atlas.updateObject",obj("id" to a.getString("id"),"archived" to true))
             "atlas.copyObject" -> {val source=store.one("atlas_objects",a.getString("id")) ?: error("对象不存在");return dispatch("atlas.createObject",obj("type" to source.s("type"),"title" to a.s("title",source.s("title")+" 副本"),"parentId" to source.s("parent_id").ifEmpty{null},"config" to JSONObject(source.s("config"))))}
             "atlas.relate"->{val from=a.getString("fromId");val to=a.getString("toId");require(store.one("atlas_objects",from)!=null && store.one("atlas_objects",to)!=null);val id=uid();store.put("atlas_relations",obj("id" to id,"from_id" to from,"to_id" to to,"kind" to a.s("kind","related")));return obj("id" to id)}

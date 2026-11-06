@@ -42,14 +42,11 @@ import java.time.LocalDate
     }},confirmButton={TextButton(enabled=title.isNotBlank() && id.matches(Regex("[a-zA-Z][a-zA-Z0-9_]{0,39}")),onClick={onSave(obj("id" to id,"title" to title,"type" to type,"required" to required,"options" to JSONArray(options.lines().filter{it.isNotBlank()})))}){Text("添加")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
 }
 @Composable fun ManageDialog(o:JSONObject,objects:List<JSONObject>,vm:AtlasModel,onDismiss:()->Unit) {
-    var title by remember{mutableStateOf(o.s("title"))};var parent by remember{mutableStateOf(o.s("parent_id"))};var field by remember{mutableStateOf(false)};var position by remember{mutableStateOf("0")};var hidden by remember{mutableStateOf(false)};var relate by remember{mutableStateOf("")}
+    var title by remember{mutableStateOf(o.s("title"))};var parent by remember{mutableStateOf(o.s("parent_id"))};var field by remember{mutableStateOf(false)};var relate by remember{mutableStateOf("")}
     AlertDialog(onDismissRequest=onDismiss,title={Text("管理${o.s("title")}")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
         OutlinedTextField(title,{title=it},label={Text("名称")},modifier=Modifier.fillMaxWidth())
         Pick("移动到",listOf("" to "根空间")+objects.filter{it.s("id")!=o.s("id") && it.s("type") in setOf("FOLDER","PROJECT","WORKSPACE","DASHBOARD")}.map{it.s("id") to it.s("title")},parent){parent=it}
         if(o.s("type")=="METRIC")TextButton(onClick={field=true}){Text("增加字段")}
-        OutlinedTextField(position,{position=it},label={Text("首页顺序（数字越小越靠前）")},modifier=Modifier.fillMaxWidth())
-        Row{Checkbox(hidden,{hidden=it});Text("隐藏首页卡片",Modifier.padding(top=12.dp))}
-        TextButton(onClick={vm.action("atlas.layout",obj("objectId" to o.s("id"),"position" to (position.toIntOrNull() ?: 0),"hidden" to hidden),"调整首页");onDismiss()}){Text("应用首页设置")}
         Pick("关联对象",objects.filter{it.s("id")!=o.s("id")}.map{it.s("id") to it.s("title")},relate){relate=it}
         if(relate.isNotEmpty())TextButton(onClick={vm.action("atlas.relate",obj("fromId" to o.s("id"),"toId" to relate,"kind" to "display"),"关联对象");onDismiss()}){Text("添加关联")}
         TextButton(onClick={vm.action("atlas.updateObject",obj("id" to o.s("id"),"archived" to (o.optInt("archived")==0)),"更新归档状态");onDismiss()}){Text(if(o.optInt("archived")==0) "归档" else "恢复归档")}
@@ -124,9 +121,18 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
     }},confirmButton={TextButton(enabled=value.isNotBlank() && date.isNotBlank(),onClick={onImport(metric.ifEmpty{null},value,date)}){Text("导入")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
 }
 
-@Composable fun TextEventDialog(onDismiss:()->Unit,onSave:(String,String?)->Unit) {
-    var text by remember{mutableStateOf("")};var date by remember{mutableStateOf("")}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("记录事件")},text={Column{OutlinedTextField(text,{text=it},label={Text("内容")},modifier=Modifier.fillMaxWidth(),minLines=3);OutlinedTextField(date,{date=it},label={Text("发生日期（可选）")},modifier=Modifier.fillMaxWidth())}},confirmButton={TextButton(enabled=text.isNotBlank(),onClick={onSave(text,date.ifBlank{null})}){Text("保存")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+@Composable fun TextEventDialog(initial:JSONObject?=null,onDismiss:()->Unit,onSave:(String,String?)->Unit) {
+    var text by remember(initial) { mutableStateOf(initial?.s("raw_input").orEmpty()) }
+    var date by remember(initial) { mutableStateOf(if(initial==null) LocalDate.now().toString() else initial.s("local_date")) }
+    val validDate = date.isBlank() || runCatching { LocalDate.parse(date) }.isSuccess
+    AlertDialog(onDismissRequest=onDismiss,title={Text(if(initial==null) "记录文字" else "修改文字记录")},text={
+        Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(text,{text=it},label={Text("内容")},modifier=Modifier.fillMaxWidth(),minLines=3)
+            OutlinedTextField(date,{date=it},label={Text("发生日期（可选）")},modifier=Modifier.fillMaxWidth())
+            if (!validDate) Text("请使用 YYYY-MM-DD",color=MaterialTheme.colorScheme.error)
+        }
+    },confirmButton={Button(enabled=text.isNotBlank() && validDate,onClick={onSave(text.trim(),date.ifBlank{null})}){Text("保存")}},
+        dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
 }
 
 @Composable fun FinanceDialog(objects:List<JSONObject>,balance:Boolean,onDismiss:()->Unit,onExecute:(String,JSONObject)->Unit) {

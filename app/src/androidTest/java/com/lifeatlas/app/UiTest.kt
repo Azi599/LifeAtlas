@@ -12,11 +12,13 @@ class UiTest {
     @get:Rule(order=0) val rule=createAndroidComposeRule<MainActivity>()
     @get:Rule(order=1) val failures=object:org.junit.rules.TestWatcher(){override fun failed(error:Throwable,description:org.junit.runner.Description){runCatching{capture("failure-"+description.methodName+".png")}}}
     @Test fun manualProjectCreationWorksWithoutAi(){
-        rule.onNodeWithText("手动创建").performClick()
+        rule.onNodeWithTag("tab-settings").performClick()
+        rule.onNodeWithText("空间管理").performClick()
+        rule.onNodeWithText("新建").performClick()
         rule.onNodeWithText("名称").performTextInput("离线项目-${System.currentTimeMillis()}")
         rule.onNodeWithText("创建",useUnmergedTree=true).performClick()
         rule.waitForIdle()
-        rule.onNodeWithText("手动创建").assertExists()
+        rule.onNodeWithText("新建").assertExists()
     }
     @Test fun dynamicPluginRendersAndAcceptsRecord(){
         val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
@@ -26,6 +28,9 @@ class UiTest {
         val metric=vm.store.objects(project).first{it.s("type")=="METRIC"}
         vm.actions.single("atlas.record",obj("metricId" to metric.s("id"),"value" to "250","date" to java.time.LocalDate.now().toString()))
         runBlocking{vm.refresh().join()};rule.waitForIdle()
+        rule.onNodeWithTag("tab-settings").performClick()
+        rule.onNodeWithText("空间管理").performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("植物养护测试"))
         rule.onNodeWithText("植物养护测试").performScrollTo().performClick()
         rule.onNodeWithText("浇水量").performScrollTo().performClick()
         rule.onNodeWithText("新增记录").assertExists()
@@ -69,12 +74,21 @@ class UiTest {
             val id=vm.store.metrics().first{it.s("title")=="浇水量"}.s("id");vm.actions.single("atlas.record",obj("metricId" to id,"value" to "250","date" to java.time.LocalDate.now().toString()))
         }
         runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()};rule.waitForIdle();capture("default-home.png")
-        rule.onNodeWithText("记录").performClick();rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("record-item"));rule.onAllNodesWithTag("record-item").onFirst().assertIsDisplayed();capture("records.png")
-        rule.onNodeWithText("显示：记录").performScrollTo().performClick();rule.onNodeWithText("时间轴").performClick();rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("timeline-item"));rule.onAllNodesWithTag("timeline-item").onFirst().assertIsDisplayed();capture("timeline.png")
-        rule.onNodeWithText("分析").performClick();rule.onNodeWithText("选择指标：请选择").performScrollTo().performClick();rule.onNodeWithText("浇水量").performClick();rule.onNodeWithTag("trend-chart").performScrollTo().assertIsDisplayed();capture("analysis.png")
-        rule.onNodeWithText("新增记录").performScrollTo().performClick();rule.onNodeWithText("记录浇水量").assertIsDisplayed();rule.onNodeWithText("取消").performClick()
-        rule.onNodeWithText("首页").performClick();rule.onNodeWithText("输入").performClick().performTextInput("创建新的生活项目");rule.waitUntil(10000){androidx.core.view.ViewCompat.getRootWindowInsets(rule.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())==true};capture("keyboard.png");closeKeyboard()
-        rule.onNodeWithText("我的").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick){it()};rule.waitUntil(10000){rule.onAllNodesWithText("外观").fetchSemanticsNodes().isNotEmpty()};rule.onNodeWithText("外观").performScrollTo().performClick();rule.onNodeWithText("已保存主题：薰衣草").assertExists();capture("theme-editor.png")
+        rule.onNodeWithTag("tab-history").performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("timeline-item"))
+        rule.onAllNodesWithTag("timeline-item").onFirst().assertIsDisplayed()
+        capture("timeline.png")
+        rule.onNodeWithTag("tab-analytics").performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("composition-pie"))
+        rule.onNodeWithTag("composition-pie").performScrollTo().assertIsDisplayed()
+        capture("analysis-pie.png")
+        rule.onNodeWithTag("trend-chart").performScrollTo().assertIsDisplayed()
+        capture("analysis-bars.png")
+        rule.onNodeWithTag("tab-workspace").performClick()
+        rule.onNodeWithTag("command-input").performClick().performTextInput("创建新的生活项目")
+        rule.waitUntil(10000){androidx.core.view.ViewCompat.getRootWindowInsets(rule.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())==true}
+        capture("keyboard.png");closeKeyboard()
+        rule.onNodeWithTag("tab-settings").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick){it()};rule.waitUntil(10000){rule.onAllNodesWithText("外观").fetchSemanticsNodes().isNotEmpty()};rule.onNodeWithText("外观").performScrollTo().performClick();rule.onNodeWithText("已保存主题：薰衣草").assertExists();capture("theme-editor.png")
         rule.onNodeWithText("主题名称").performScrollTo().performTextClearance();rule.onNodeWithText("主题名称").performTextInput("粉紫日记");closeKeyboard()
         rule.onNodeWithText("主色").performScrollTo().performClick();rule.onNodeWithText("调色盘").assertExists();capture("color-picker.png")
         rule.onNodeWithText("HEX").performTextClearance();rule.onNodeWithText("HEX").performTextInput("#BAA1D7");rule.onNodeWithText("选择").performClick();closeKeyboard()
@@ -86,13 +100,38 @@ class UiTest {
         org.junit.Assert.assertEquals("#BAA1D7",saved.s("primary"));org.junit.Assert.assertTrue(saved.getBoolean("gradient"));org.junit.Assert.assertEquals(3,saved.getJSONArray("stops").length())
         rule.onNodeWithText("单色主题图标").performScrollTo().assertIsDisplayed();capture("icon-masks.png")
         rule.activityRule.scenario.recreate();vm=ViewModelProvider(rule.activity)[AtlasModel::class.java];runBlocking{vm.refresh().join()};rule.waitForIdle();org.junit.Assert.assertEquals(savedId,vm.ui.value.themeId)
-        rule.onNodeWithText("首页").performClick();capture("custom-gradient-home.png")
+        rule.onNodeWithTag("tab-workspace").performClick();capture("custom-gradient-home.png")
         val manifest=obj("id" to "ui.preview"+System.currentTimeMillis(),"title" to "观鸟记录","version" to 1,"metrics" to JSONArray().put(obj("key" to "bird","title" to "观察数量","kind" to "CHANGE","unit" to "只","aggregate" to "SUM","fields" to JSONArray().put(obj("id" to "species","title" to "鸟类名称","type" to "text")))))
         runBlocking{vm.action("atlas.installPlugin",obj("manifest" to manifest),"预览观鸟记录").join()};rule.waitForIdle();rule.onNodeWithText("表单预览：观察数量").performScrollTo().assertIsDisplayed();capture("plugin-generation-preview.png")
         rule.onNodeWithText("鸟类名称").performScrollTo().assertIsDisplayed();capture("plugin-generation-form.png")
         vm.clearPending();runBlocking{vm.action("atlas.setAppearance",obj("mode" to "dark"),"深色").join()};rule.waitForIdle();capture("dark-home.png")
         runBlocking{vm.action("atlas.resetTheme",obj(),"默认主题").join()}
     }
+    @Test fun localInputAndTimelineEditWorkAcrossFourTabs() {
+        val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        val title="测试咖啡杯数"
+        val metric = vm.actions.single("atlas.createObject",obj("type" to "METRIC","title" to title,
+            "config" to obj("kind" to "CHANGE","unit" to "杯","aggregate" to "SUM")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        runBlocking { vm.refresh().join() }
+        listOf("workspace","history","analytics","settings").forEach { id -> rule.onNodeWithTag("tab-$id").assertIsDisplayed() }
+        rule.onNodeWithText("空间管理").assertDoesNotExist()
+        rule.onNodeWithTag("command-input").performTextReplacement("记录今天${title}两杯")
+        rule.onNodeWithTag("command-send").performClick()
+        rule.waitUntil(10000) { vm.store.facts(metric).isNotEmpty() && !vm.ui.value.busy }
+        closeKeyboard()
+        rule.onNodeWithTag("tab-history").performClick()
+        rule.onNodeWithTag("command-input").assertDoesNotExist()
+        val row = hasTestTag("timeline-item") and hasAnyDescendant(hasText(title))
+        rule.onNodeWithTag("atlas-list").performScrollToNode(row)
+        rule.onNode(hasText("修改") and hasAnyAncestor(row)).performScrollTo().performClick()
+        rule.onNodeWithText("数值").performTextReplacement("3")
+        closeKeyboard()
+        rule.onNodeWithText("保存").performClick()
+        rule.waitUntil(10000) { vm.store.facts(metric).single().s("value")=="3" && !vm.ui.value.busy }
+        rule.onNode(hasText("3 杯") and hasAnyAncestor(row)).assertIsDisplayed()
+    }
+
     private fun closeKeyboard(){
         rule.activity.runOnUiThread{
             rule.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime())

@@ -43,10 +43,33 @@ class StorageTest {
         actions.single("atlas.editRecord", obj("id" to corrected.s("id"), "date" to "2026-11-04"))
         val deleted = save(selected, "2026-11-06")
         actions.single("atlas.deleteRecord", obj("id" to deleted.s("id")))
-        val events = db.historyEvents(selected, "2026-11-01", "2026-11-30", 0)
-        assertEquals(listOf(expected.s("eventId"), corrected.s("eventId")), events.map { it.s("id") })
-        assertEquals("2026-11-04", events.last().s("timeline_date"))
+        val events = db.timeline(selected, "2026-11-01", "2026-11-30", 0)
+        assertEquals(listOf(expected.s("id"), corrected.s("id")), events.map { it.s("id") })
+        assertEquals("2026-11-04", events.last().s("local_date"))
     }
+    @Test fun timelineMergesTextAndFactsByOccurrence() {
+        val metric = metric()
+        val date = "2026-11-05"
+        val zone = "Asia/Shanghai"
+        val late = actions.single("atlas.record",obj("metricId" to metric,"date" to date,
+            "occurredAt" to "2026-11-05T08:00:00Z","zone" to zone,"value" to "9"))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val note = actions.single("atlas.createEvent",obj("text" to "文字记录","date" to date,
+            "occurredAt" to "2026-11-05T06:00:00Z","zone" to zone))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val early = actions.single("atlas.record",obj("metricId" to metric,"date" to date,
+            "occurredAt" to "2026-11-05T05:00:00Z","zone" to zone,"value" to "2"))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        assertEquals(listOf(late,note,early),db.timeline(null,"","",0).map { it.s("id") })
+        actions.single("atlas.editEvent",obj("id" to note,"text" to "改过的记录","date" to "2026-11-04"))
+        val after = db.timeline(null,"","",0)
+        assertEquals(listOf(late,early,note),after.map { it.s("id") })
+        assertEquals("改过的记录",after.last().s("raw_input"))
+        assertEquals("2026-11-04T06:00:00Z",after.last().s("occurred_at"))
+        db.undo()
+        assertEquals(listOf(late,note,early),db.timeline(null,"","",0).map { it.s("id") })
+    }
+
     @Test fun proposedEditCannotReuseAStaleReview() {
         val metricId = metric()
         val result = actions.single("atlas.record", obj("metricId" to metricId, "value" to "65.2", "date" to "2026-11-05"))

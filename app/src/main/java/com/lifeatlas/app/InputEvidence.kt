@@ -167,7 +167,7 @@ internal class InputEvidence(input: String, private val today: LocalDate) {
             '四' to 4, '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9)
         private val scales = mapOf('十' to 10, '百' to 100, '千' to 1000)
 
-        private fun number(value: String): BigDecimal? {
+        internal fun number(value: String): BigDecimal? {
             value.toBigDecimalOrNull()?.let { return it }
             if (value.isEmpty()) return null
             val parts = value.split('点', '.')

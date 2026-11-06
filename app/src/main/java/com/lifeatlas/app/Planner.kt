@@ -11,7 +11,9 @@ import java.time.ZoneId
 import java.time.DateTimeException
 import java.util.concurrent.TimeUnit
 
-data class AiConfig(val endpoint: String, val key: String, val model: String)
+data class AiConfig(val endpoint: String, val key: String, val model: String) {
+    val configured get() = endpoint.startsWith("https://") && model.isNotBlank()
+}
 
 class Planner(private val actions: Actions) {
     private val readTools = setOf(
@@ -20,7 +22,7 @@ class Planner(private val actions: Actions) {
     )
 
     fun plan(config: AiConfig, input: String, context: JSONObject): JSONObject {
-        require(config.key.isNotBlank()) { "请先配置 AI API 密钥，或使用手动操作" }
+        require(config.configured) { "请在「我的 → AI 与模型」连接你的模型，或使用手动录入" }
         val today = LocalDate.now()
         val bindings = PlanningContext(context)
         val evidence = if (context.has("imageText")) null else InputEvidence(input, today)
@@ -51,7 +53,7 @@ class Planner(private val actions: Actions) {
             字段用数组，例如 [{"id":"location","title":"地点","type":"text"},{"id":"completed","title":"完成","type":"boolean"}]。
             字段类型 text/decimal/date/boolean/choice，id 用英文字母开头，title 显示原名称。
             atlas.query/atlas.aggregate: metricId,from?,to?,limit?；日期用 YYYY-MM-DD。aggregate 指定起止日期和 method?。
-            atlas.report: title,metrics（指标 id 数组）,from,to（YYYY-MM-DD）。atlas.navigate: page（workspace/spaces/history/analytics/settings）。
+            atlas.report: title,metrics（指标 id 数组）,from,to（YYYY-MM-DD）。atlas.navigate: page（workspace 输入、history 时间轴、analytics 分析、settings 我的、spaces 空间管理）。
             atlas.createView: title,components（引用真实指标的表单、历史或图表）。财务 role 使用 income/expense/balance/accountChange。
             atlas.setAppearance: mode（light/dark/system）,compact?,themeId?。atlas.searchObjects: keyword,type?。
             atlas.installPlugin: args 内放 manifest。示例结构：
@@ -158,7 +160,7 @@ class Planner(private val actions: Actions) {
             connection.readTimeout = timeoutMs
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer ${config.key}")
+            if(config.key.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer ${config.key}")
             val body = obj("model" to config.model, "messages" to messages, "temperature" to 0.1)
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = connection.responseCode

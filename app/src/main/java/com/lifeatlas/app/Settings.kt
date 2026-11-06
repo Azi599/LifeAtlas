@@ -19,6 +19,6 @@ class Settings(context:Context) {
     }
     fun setSecret(name:String,value:String) {val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,secret());prefs.edit().putString(name,Base64.encodeToString(cipher.iv+cipher.doFinal(value.toByteArray()),Base64.NO_WRAP)).apply()}
     fun getSecret(name:String):String=runCatching {val data=Base64.decode(prefs.getString(name,null) ?: return "",Base64.NO_WRAP);val cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,secret(),GCMParameterSpec(128,data.copyOfRange(0,12)));String(cipher.doFinal(data.copyOfRange(12,data.size)))}.getOrDefault("")
-    fun ai()=AiConfig(prefs.getString("endpoint","https://api.deepseek.com/chat/completions")!!,getSecret("api_key"),prefs.getString("model","deepseek-chat")!!)
+    fun ai()=AiConfig(prefs.getString("endpoint","").orEmpty(),getSecret("api_key"),prefs.getString("model","").orEmpty())
     fun saveAi(endpoint:String,model:String,key:String) {require(endpoint.startsWith("https://") && model.isNotBlank());prefs.edit().putString("endpoint",endpoint.trim()).putString("model",model.trim()).apply();setSecret("api_key",key.trim())}
 }

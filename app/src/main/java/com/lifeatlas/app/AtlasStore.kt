@@ -114,33 +114,47 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
         return query(sql,(listOf(from,to)+listOfNotNull(metric)+listOf(limit.coerceIn(1,500).toString(),offset.coerceAtLeast(0).toString())).toTypedArray()).map{r->val raw=r.s("value").takeIf{it.isNotEmpty()}?.let(::decimal);val value=resolvedRecordValue(raw,JSONObject(r.s("fields_json")),config(r.s("metric_id")));r.put("raw_value",raw?.toPlainString() ?: JSONObject.NULL);r.put("value",value?.toPlainString() ?: JSONObject.NULL);if(raw!=null && value==null)r.put("calculationError",true);r}
 
     }
-    fun historyEvents(metricId: String?, from: String, to: String, offset: Int): List<JSONObject> {
+    fun timeline(metricId: String?, from: String, to: String, offset: Int): List<JSONObject> {
+        val bounds = listOf(from.ifBlank { "0001-01-01" }, to.ifBlank { "9999-12-31" })
         val metricFilter = if (metricId == null) "" else "AND f.metric_id = ?"
-        val args = mutableListOf(from, to)
-        if (metricId != null) args.add(metricId)
-        val textEvents = if (metricId != null) "" else """
+        val withoutDate = if (from.isBlank() && to.isBlank()) "OR e.local_date IS NULL" else ""
+        val notes = if (metricId != null) "" else """
             UNION ALL
-            SELECT e.*, e.local_date timeline_date, julianday(e.occurred_at) timeline_time, 0 fact_count
+            SELECT e.id, 1, e.local_date, julianday(e.occurred_at), e.created_at
             FROM atlas_events e
-            WHERE (e.local_date BETWEEN ? AND ? OR e.local_date IS NULL)
-                AND (e.source = 'text' OR NOT EXISTS (SELECT 1 FROM atlas_facts f WHERE f.event_id = e.id))
-                AND NOT EXISTS (SELECT 1 FROM matching WHERE matching.event_id = e.id)
+            WHERE (e.local_date BETWEEN ? AND ? $withoutDate)
+                AND e.source = 'text'
         """.trimIndent()
-        if (metricId == null) args.addAll(listOf(from, to))
-        args.add(offset.coerceAtLeast(0).toString())
-        return query("""
-            WITH matching AS (
-                SELECT f.event_id, MAX(f.local_date) timeline_date,
-                    MAX(julianday(COALESCE(f.start_at, f.occurred_at))) timeline_time, COUNT(*) fact_count
+        val args = bounds + if (metricId == null) bounds else listOf(metricId)
+        val rows = query("""
+            WITH feed AS (
+                SELECT f.id, 0 is_note, f.local_date day,
+                    julianday(COALESCE(f.start_at, f.occurred_at)) clock, f.created_at added
                 FROM atlas_facts f
                 WHERE f.deleted = 0 AND f.local_date BETWEEN ? AND ? $metricFilter
-                GROUP BY f.event_id
+                $notes
+                ORDER BY day DESC, clock DESC, added DESC, id DESC, is_note
+                LIMIT 51 OFFSET ?
             )
-            SELECT e.*, m.timeline_date, m.timeline_time, m.fact_count
-            FROM matching m JOIN atlas_events e ON e.id = m.event_id
-            $textEvents
-            ORDER BY timeline_date DESC, timeline_time DESC, created_at DESC, id DESC LIMIT 50 OFFSET ?
-        """.trimIndent(), args.toTypedArray())
+            SELECT f.*, o.title metric_title, o.config metric_config, feed.day, feed.is_note,
+                feed.id item_id, e.raw_input note, e.occurred_at note_time, e.zone note_zone
+            FROM feed
+            LEFT JOIN atlas_facts f ON feed.is_note = 0 AND f.id = feed.id
+            LEFT JOIN atlas_objects o ON o.id = f.metric_id
+            LEFT JOIN atlas_events e ON feed.is_note = 1 AND e.id = feed.id
+            ORDER BY feed.day DESC, feed.clock DESC, feed.added DESC, feed.id DESC, feed.is_note
+        """.trimIndent(), (args + offset.coerceAtLeast(0).toString()).toTypedArray())
+        return rows.map { row ->
+            if (row.optInt("is_note") == 1) {
+                obj("id" to row.s("item_id"), "is_note" to 1, "raw_input" to row.s("note"),
+                    "local_date" to row.opt("day"), "occurred_at" to row.opt("note_time"), "zone" to row.s("note_zone"))
+            } else {
+                val config = JSONObject(row.s("metric_config"))
+                val raw = row.s("value").takeIf { it.isNotEmpty() }?.let(::decimal)
+                val value = resolvedRecordValue(raw, JSONObject(row.s("fields_json")), config)
+                row.put("value", value?.toPlainString() ?: JSONObject.NULL)
+            }
+        }
     }
 
     @Synchronized fun aggregate(metric:String,from:String,to:String,method:String=config(metric).s("aggregate","SUM")):JSONObject {

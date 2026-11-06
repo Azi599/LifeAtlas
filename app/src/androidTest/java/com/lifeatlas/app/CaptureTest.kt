@@ -35,7 +35,7 @@ class CaptureTest {
         rule.onNodeWithTag("command-status").assertTextEquals("已保存 1 条记录")
         assertEquals(1,vm.store.facts(metric,"2026-11-04","2026-11-04").size)
         runBlocking{vm.execute(plan,true).join()};assertEquals(1,vm.store.facts(metric,"2026-11-04","2026-11-04").size)
-        val input=rule.onNodeWithText("输入").fetchSemanticsNode().boundsInRoot;val send=rule.onNodeWithTag("command-send").fetchSemanticsNode().boundsInRoot
+        val input=rule.onNodeWithTag("command-input").fetchSemanticsNode().boundsInRoot;val send=rule.onNodeWithTag("command-send").fetchSemanticsNode().boundsInRoot
         assertTrue(send.center.x>input.center.x)
         capture("receipt-confirmed.png")
     }

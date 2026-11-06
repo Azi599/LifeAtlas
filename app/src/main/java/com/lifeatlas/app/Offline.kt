@@ -2,18 +2,175 @@ package com.lifeatlas.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigDecimal
+import java.text.Normalizer
 import java.time.LocalDate
 
 object Offline {
-    fun plan(input:String,store:AtlasStore):JSONObject? {
-        val tokens=input.trim().split(Regex("\\s+"));if(tokens.isEmpty()) return null
-        val head=tokens[0]
-        fun single(id:String,args:JSONObject)=obj("title" to input,"steps" to JSONArray().put(obj("stepId" to "s1","actionId" to id,"args" to args)))
-        return when(head) {
-            "/folder","/project" -> {require(tokens.size>=2);single("atlas.createObject",obj("type" to if(head=="/folder") "FOLDER" else "PROJECT","title" to tokens.drop(1).joinToString(" ")))}
-            "/record" -> {require(tokens.size>=3){"格式：/record 指标名 数值 日期（可选）"};val found=store.metrics().filter{it.s("title")==tokens[1]};require(found.size==1){"指标名称有歧义，请从空间中选择"};single("atlas.record",obj("metricId" to found[0].s("id"),"value" to tokens[2],"date" to tokens.getOrElse(3){LocalDate.now().toString()}))}
-            "/query" -> {val found=store.metrics().filter{it.s("title")==tokens.getOrElse(1){""}};require(found.size==1);single("atlas.query",obj("metricId" to found[0].s("id")))}
-            "/event" -> single("atlas.createEvent",obj("text" to tokens.drop(1).joinToString(" ")))
+    private data class Vocabulary(val words: List<String>, val kind: String = "", val role: String = "", val unit: String = "")
+    private data class Quantity(val value: BigDecimal, val unit: String)
+    private data class Match(val metric: JSONObject, val quantity: Quantity)
+
+    private val vocabulary = listOf(
+        Vocabulary(listOf("学习时长","学习时间","学习","学了","自习","复习"),kind="ALLOCATION"),
+        Vocabulary(listOf("睡眠时长","睡觉时间","睡眠","睡了","睡觉"),kind="ALLOCATION"),
+        Vocabulary(listOf("阅读时长","阅读时间","阅读","看书","读书"),kind="ALLOCATION"),
+        Vocabulary(listOf("阅读页数","看书页数","阅读","看书","读了","看了"),unit="页"),
+        Vocabulary(listOf("运动时长","运动时间","运动","锻炼","练了"),kind="ALLOCATION"),
+        Vocabulary(listOf("跑步时长","跑步时间","跑步","跑了"),kind="ALLOCATION"),
+        Vocabulary(listOf("饮水量","喝水量","饮水","喝水","喝了"),unit="毫升"),
+        Vocabulary(listOf("晨间体重","体重","称重","称了"),unit="kg"),
+        Vocabulary(listOf("午餐花了","晚餐花了","晚饭花了","早餐花了","花了","消费了","支出了","消费","支出"),role="expense"),
+        Vocabulary(listOf("收入","进账","赚了","收到了"),role="income")
+    )
+    private val pages = mapOf(
+        "输入" to "workspace","首页" to "workspace","主页" to "workspace",
+        "时间轴" to "history","记录" to "history","记录流" to "history","历史记录" to "history",
+        "分析" to "analytics","统计" to "analytics","我的" to "settings","设置" to "settings","空间" to "spaces"
+    )
+    private val recordLead = Regex("^(?:请|帮我|给我)?(?:记录一下|记一笔|记一下|记下|记录|补记)")
+    private val dateLead = Regex("^(今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|\\d{4}-\\d{2}-\\d{2})")
+    private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
+    private val rangeLead = Regex("^(最近[0-9]{1,2}天|近[0-9]{1,2}天|最近七天|近七天|本月|这个月|上月|上个月|今天|昨天|前天)")
+    private val number = "半|[+-]?(?:[0-9]+(?:\\.[0-9]+)?|[零〇一二两三四五六七八九十百千万]+(?:点[零〇一二两三四五六七八九0-9]+)?)"
+    private val numericTail = Regex("^(?:[:=]|是|为|了|有)?($number)([^0-9零〇一二两三四五六七八九十百千万点.?？,，;；:：!！+\\-]{0,18})$")
+    private val cashTail = Regex("^(?:[:=]|是|为|了)?($number)块([0-9零〇一二两三四五六七八九])(?:钱)?$")
+
+    fun plan(input: String, store: AtlasStore): JSONObject? =
+        plan(input,store.metrics(),LocalDate.now())
+
+    internal fun plan(input: String, metrics: List<JSONObject>, today: LocalDate): JSONObject? {
+        val text = Normalizer.normalize(input.trim(),Normalizer.Form.NFKC).trimEnd('。','!','！').trim()
+        if (text.isEmpty()) return null
+        if (text.startsWith("/")) return legacy(text,metrics,today)
+        if (text.endsWith("?") && statisticLead.find(text)==null) return null
+        val request = text.removeSuffix("?")
+        val pageName = request.replaceFirst(Regex("^(?:请|帮我)?(?:打开|切换到|切到|进入|去|看看)"),"").removeSuffix("页").trim()
+        pages[pageName]?.let { return command(input,"atlas.navigate",obj("page" to it)) }
+        Regex("^(?:记条文字|记录文字|记一条文字)[:：]\\s*(.+)$").matchEntire(request)?.let {
+            return command(input,"atlas.createEvent",obj("text" to it.groupValues[1],"date" to today.toString()))
+        }
+        statisticLead.find(request)?.let { lead ->
+            val body = request.drop(lead.value.length).trim()
+            val range = rangeLead.find(body)
+            val (from,to) = dateRange(range?.value.orEmpty(),today) ?: return null
+            val subject = body.drop(range?.value?.length ?: 0).removePrefix("的").trim()
+            val suffix = listOf("的平均值","平均值","的总计","总计","的合计","合计","的统计","统计","的记录","记录").firstOrNull { subject.endsWith(it) }
+            val name = if (suffix==null) subject else subject.removeSuffix(suffix)
+            val exact = metrics.filter { compact(it.s("title"))==compact(name) }
+            val matching = exact.ifEmpty { metrics.filter { metric -> vocabulary.any { compact(name) in it.words && matches(metric,it) } } }
+            if (matching.isEmpty()) return null
+            val method = when {
+                suffix?.contains("平均")==true -> "MEAN"
+                suffix?.contains("总计")==true || suffix?.contains("合计")==true -> "SUM"
+                else -> null
+            }
+            val aggregate = method!=null || lead.groupValues[1] in setOf("统计","汇总") || suffix?.contains("统计")==true
+            return choose(input,"查哪个指标？",matching.map { metric ->
+                metric to command(input,if(aggregate) "atlas.aggregate" else "atlas.query",
+                    obj("metricId" to metric.s("id"),"from" to from.toString(),"to" to to.toString()).apply { method?.let { put("method",it) } })
+            })
+        }
+
+        var body = compact(request)
+        body = body.replaceFirst(recordLead,"")
+        val date = dateLead.find(body)
+        val day = date?.value?.let { parseDate(it,today) ?: return null } ?: today
+        body = body.drop(date?.value?.length ?: 0).replaceFirst(recordLead,"").trimStart(':',',','，')
+        val exact = metrics.mapNotNull { metric ->
+            val title = compact(metric.s("title"))
+            if (title.isEmpty() || !body.startsWith(title)) return@mapNotNull null
+            val q = parseQuantity(body.drop(title.length)) ?: return@mapNotNull null
+            title.length to Match(metric,q)
+        }
+        val found = if (exact.isNotEmpty()) exact.filter { it.first==exact.maxOf { pair -> pair.first } }.map { it.second }
+            else vocabulary.flatMap { words ->
+                val word = words.words.filter { body.startsWith(it) }.maxByOrNull { it.length } ?: return@flatMap emptyList()
+                val q = parseQuantity(body.drop(word.length)) ?: return@flatMap emptyList()
+                metrics.filter { matches(it,words) }.map { Match(it,q) }
+            }.distinctBy { it.metric.s("id") }
+        val options = found.mapNotNull { (metric,q) ->
+            val config = JSONObject(metric.s("config"))
+            val unit = config.s("unit")
+            if (q.unit.isNotBlank() && runCatching { Units.convert(q.value,q.unit,unit) }.isFailure) return@mapNotNull null
+            if (config.s("kind")=="ALLOCATION" && q.value.signum()<0) return@mapNotNull null
+            val fields = config.optJSONArray("fields")
+            if (config.has("expression") || fields?.objects()?.any { it.optBoolean("required") }==true) return@mapNotNull null
+            metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),"value" to q.value.toPlainString(),
+                "unit" to q.unit.ifBlank{unit},"date" to day.toString()))
+        }
+        return choose(input,"记到哪个指标？",options)
+    }
+
+    private fun choose(input:String,question:String,options:List<Pair<JSONObject,JSONObject>>):JSONObject? {
+        if (options.isEmpty()) return null
+        if (options.size==1) return options.single().second
+        return obj("question" to question,"rawInput" to input,"options" to JSONArray(options.take(8).map { (metric,plan) ->
+            val duplicate = options.count { it.first.s("title")==metric.s("title") }>1
+            obj("title" to (metric.s("title")+if(duplicate) " · "+metric.s("id").take(6) else ""),"plan" to plan)
+        }))
+    }
+
+    private fun command(input:String,id:String,args:JSONObject) =
+        obj("title" to input,"rawInput" to input,"requestId" to uid(),"local" to true,
+            "steps" to JSONArray().put(obj("stepId" to "s1","actionId" to id,"args" to args)))
+
+    private fun matches(metric:JSONObject,words:Vocabulary):Boolean {
+        val config = JSONObject(metric.s("config"))
+        if (words.role.isNotBlank()) return config.s("role")==words.role
+        if (compact(metric.s("title")) !in words.words) return false
+        if (words.kind.isNotBlank() && config.s("kind")!=words.kind) return false
+        val unit = config.s("unit")
+        return words.unit.isBlank() || unit==words.unit ||
+            (Units.dimension(words.unit)!=null && Units.dimension(unit)==Units.dimension(words.unit))
+    }
+
+    private fun parseQuantity(text:String):Quantity? {
+        val body=text.removeSuffix("整")
+        cashTail.matchEntire(body)?.let {
+            val whole = InputEvidence.number(it.groupValues[1]) ?: return null
+            val fraction = InputEvidence.number(it.groupValues[2])?.movePointLeft(1) ?: return null
+            return Quantity(if(whole.signum()<0) whole-fraction else whole+fraction,"元")
+        }
+        val (digits,unit) = numericTail.matchEntire(body)?.destructured ?: return null
+        val value = if(digits=="半") BigDecimal("0.5") else InputEvidence.number(digits) ?: return null
+        return Quantity(value,when(unit){"个小时","钟头"->"小时";else->unit})
+    }
+
+    private fun compact(text:String) = text.filterNot(Char::isWhitespace)
+    private fun parseDate(value:String,today:LocalDate):LocalDate? = when(value) {
+        "今天","今日","今早","今晚" -> today
+        "昨天","昨日","昨早","昨晚" -> today.minusDays(1)
+        "前天" -> today.minusDays(2)
+        else -> runCatching { LocalDate.parse(value) }.getOrNull()
+    }
+    private fun dateRange(value:String,today:LocalDate):Pair<LocalDate,LocalDate>? = when(value) {
+        "" -> LocalDate.of(1,1,1) to today
+        "本月","这个月" -> today.withDayOfMonth(1) to today
+        "上月","上个月" -> today.minusMonths(1).withDayOfMonth(1) to today.withDayOfMonth(1).minusDays(1)
+        "近七天","最近七天" -> today.minusDays(6) to today
+        else -> if(value.startsWith("近")) {
+            val days=value.filter(Char::isDigit).toLongOrNull()?.takeIf{it in 1..90} 
+            days?.let { today.minusDays(it-1) to today }
+        } else parseDate(value,today)?.let { it to it }
+    }
+
+    private fun legacy(input:String,metrics:List<JSONObject>,today:LocalDate):JSONObject? {
+        val tokens=input.split(Regex("\\s+"))
+        return when(tokens.first()) {
+            "/folder","/project" -> {
+                require(tokens.size>=2)
+                command(input,"atlas.createObject",obj("type" to if(tokens.first()=="/folder") "FOLDER" else "PROJECT","title" to tokens.drop(1).joinToString(" ")))
+            }
+            "/record","/query" -> {
+                val name=tokens.getOrNull(1).orEmpty()
+                val metric=metrics.singleOrNull { it.s("title")==name } ?: error("请使用唯一的指标名称")
+                val args=obj("metricId" to metric.s("id"))
+                if (tokens.first()=="/query") command(input,"atlas.query",args)
+                else command(input,"atlas.record",args.put("value",tokens.getOrNull(2) ?: error("请填写数值"))
+                    .put("date",tokens.getOrElse(3){today.toString()}))
+            }
+            "/event" -> command(input,"atlas.createEvent",obj("text" to tokens.drop(1).joinToString(" ")))
             else -> null
         }
     }

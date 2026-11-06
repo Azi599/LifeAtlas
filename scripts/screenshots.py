@@ -9,13 +9,16 @@ OUTPUT = pathlib.Path('screenshots')
 OUTPUT.mkdir(exist_ok=True)
 def adb(*args):
     return subprocess.check_output(['adb',*args])
-def tap_text(text):
+def tap_text(text, editor=False):
     for attempt in range(3):
         adb('shell','uiautomator','dump','/sdcard/atlas-window.xml')
         root=ET.fromstring(adb('shell','cat','/sdcard/atlas-window.xml'))
-        nodes=[n for n in root.iter('node') if n.attrib.get('text')==text]
+        nodes=[n for n in root.iter('node') if (
+            n.attrib.get('class')=='android.widget.EditText' if editor else n.attrib.get('text')==text
+        )]
         if nodes:
-            numbers=list(map(int,re.findall(r'\d+',nodes[-1].attrib['bounds'])))
+            bounds=[list(map(int,re.findall(r'\d+',n.attrib['bounds']))) for n in nodes]
+            numbers=max(bounds,key=lambda box:box[1])
             adb('shell','input','tap',str((numbers[0]+numbers[2])//2),str((numbers[1]+numbers[3])//2))
             time.sleep(1)
             return
@@ -31,11 +34,11 @@ for width in [320,360,393,432,600,840]:
         adb('shell','am','force-stop','com.lifeatlas.app.newhost.test')
         adb('shell','am','start','-n','com.lifeatlas.app.newhost.test/com.lifeatlas.app.MainActivity')
         time.sleep(3)
-        for name,label in [('workspace','首页'),('spaces','空间'),('history','记录'),('analytics','分析'),('settings','我的')]:
+        for name,label in [('workspace','输入'),('history','时间轴'),('analytics','分析'),('settings','我的')]:
             tap_text(label)
             (OUTPUT/f'{name}-{width}-{scale}.png').write_bytes(adb('exec-out','screencap','-p'))
             if name=='workspace' and width in [320,393] and scale=='1.5':
-                tap_text('输入')
+                tap_text('输入',editor=True)
                 adb('shell','input','text','LifeAtlas')
                 time.sleep(1)
                 (OUTPUT/f'keyboard-{width}-{scale}.png').write_bytes(adb('exec-out','screencap','-p'))
