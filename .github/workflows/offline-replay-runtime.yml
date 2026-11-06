@@ -1,0 +1,35 @@
+name: Offline replay runtime
+on:
+  push:
+    branches: [test/offline-replay-runtime]
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - run: bash scripts/verify_wrapper.sh
+      - run: ./gradlew :app:compileStandaloneDebugKotlin :app:testStandaloneDebugUnitTest
+      - name: Package the parser and JVM dependencies for local replay
+        run: |
+          set -euo pipefail
+          mkdir -p replay
+          jar --create --file replay/lifeatlas-parser.jar -C app/build/tmp/kotlin-classes/standaloneDebug .
+          json="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.json/json/20240303" -name 'json-20240303.jar' -print -quit)"
+          kotlin="$(find "$HOME/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/2.0.21" -name 'kotlin-stdlib-2.0.21.jar' -print -quit)"
+          cp "$json" "$kotlin" replay/
+          jlink --add-modules java.base,java.compiler,jdk.compiler,jdk.zipfs,java.logging,java.management,java.sql,jdk.unsupported --strip-debug --no-header-files --no-man-pages --compress=2 --output replay/java
+          tar -C replay -czf replay-runtime.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-replay-runtime
+          path: replay-runtime.tar.gz
