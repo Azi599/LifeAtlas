@@ -26,7 +26,15 @@ import org.json.JSONObject
             if(value.has("status"))Text(buildState(value.s("status")))
             if(value.has("duration"))Text("有效时长 ${value.s("duration")} ${value.s("unit")}")
             if(value.has("update")){val release=value.getJSONObject("update");Text("可更新至 ${release.s("versionName",release.optLong("versionCode").toString())}")}
-            if(value.has("points"))Trend(value.getJSONArray("points").objects(),value.s("unit"),value.s("chart","line"))
+            if(value.has("points")){
+                val points=value.getJSONArray("points").objects()
+                val spending=value.optBoolean("dailySpending")
+                if(spending) Text("每日支出净额",style=MaterialTheme.typography.titleMedium)
+                if(points.none{!it.isNull("value")}) Text("所选时段没有可绘制的数值")
+                else Trend(points,value.s("unit"),value.s("chart","line"),breakAtMissing=spending)
+                if(spending) Text("无记录 ${value.optInt("emptyDays")} 天，金额待补充 ${value.optInt("incompleteDays")} 天。缺失日期留空。",
+                    style=MaterialTheme.typography.bodySmall)
+            }
 
             if(value.has("records")) {
                 val records=value.getJSONArray("records").objects()

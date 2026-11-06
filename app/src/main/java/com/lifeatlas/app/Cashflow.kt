@@ -4,6 +4,38 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+
+internal fun AtlasStore.dailySpending(from:String,to:String):JSONObject = synchronized(this) {
+    val first=LocalDate.parse(from)
+    val last=LocalDate.parse(to)
+    val span=ChronoUnit.DAYS.between(first,last)
+    require(span in 0..365){"请选择一年以内的日期范围"}
+    val totals=mutableMapOf<String,BigDecimal>()
+    val incomplete=mutableSetOf<String>()
+    metrics().forEach { metric ->
+        val config=JSONObject(metric.s("config"))
+        val unit=config.s("unit")
+        if(config.s("role")!="expense" || Units.currency(unit)!="CNY") return@forEach
+        dailySeries(metric.s("id"),from,to,"SUM").forEach { point ->
+            val date=point.s("date")
+            if(point.optLong("missingCount")>0) incomplete.add(date)
+            point.s("value").toBigDecimalOrNull()?.let{amount->
+                totals[date]=totals.getOrDefault(date,BigDecimal.ZERO)-Units.convert(amount,unit,"元")
+            }
+        }
+    }
+    val points=JSONArray()
+    var empty=0
+    for(offset in 0..span) {
+        val day=first.plusDays(offset).toString()
+        val value=totals[day]
+        if(value==null && day !in incomplete) empty++
+        points.put(obj("date" to day,"value" to value?.takeUnless{day in incomplete}?.stripTrailingZeros()?.toPlainString()))
+    }
+    obj("points" to points,"chart" to "line","unit" to "元","from" to from,"to" to to,
+        "dailySpending" to true,"emptyDays" to empty,"incompleteDays" to incomplete.size)
+}
 
 internal fun AtlasStore.cashflow(from: String,to: String,metricIds: Set<String> = emptySet()):List<JSONObject> {
     require(LocalDate.parse(from)<=LocalDate.parse(to)) {"日期范围有误"}

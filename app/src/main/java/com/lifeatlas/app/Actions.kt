@@ -51,6 +51,7 @@ class Actions(val store:AtlasStore) {
         "time.resume" to "恢复 args timerId",
         "time.stop" to "结束计时并保存有起止时间的分段记录 args timerId",
         "finance.cashflow" to "查询收支和净现金流 args from,to,metricIds?；排除转账，列出缺失金额",
+        "finance.dailySpending" to "每日支出趋势 args from,to；未记录或金额缺失的日期留空",
         "finance.balance" to "推算账户余额 args snapshotMetricId,changeMetricIds:[id],asOf?；只累计锚点后明确发生的变化，同日未知先后列为未确定",
         "finance.transfer" to "转账 args fromMetricId,toMetricId,amount,date；同币种两条关联变化，净额0",
         "atlas.capabilities" to "列出宿主及动态能力",
@@ -380,6 +381,7 @@ class Actions(val store:AtlasStore) {
             "atlas.deleteWorkflow"->{store.remove("atlas_workflows",a.getString("id"));return obj("message" to "工作流已删除")}
             "time.start","time.pause","time.resume","time.stop" -> return timer(action,a)
             "time.occupied" -> return store.occupancy(a)
+            "finance.dailySpending" -> return store.dailySpending(a.getString("from"),a.getString("to"))
             "finance.cashflow" -> {
                 val metrics = a.optJSONArray("metricIds")?.let{items->(0 until items.length()).map(items::getString).toSet()}.orEmpty()
                 val from=a.getString("from");val to=a.getString("to")

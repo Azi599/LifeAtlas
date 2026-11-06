@@ -96,6 +96,32 @@ class StorageTest {
         assertTrue(db.cashflow("2026-10-12","2026-10-12").isEmpty())
     }
 
+    @Test fun dailySpendingKeepsUnknownDaysSeparateFromZero(){
+        fun create(title:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,"config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val meals=create("餐费")
+        val travel=create("出行费")
+        fun save(metric:String,date:String,value:String?,flow:String=""){
+            actions.single("atlas.record",obj("metricId" to metric,"date" to date,"value" to value,"fields" to obj("flow" to flow)))
+        }
+        save(meals,"2026-08-01","22.50")
+        save(travel,"2026-08-01","8.60")
+        save(travel,"2026-08-01","3.10","refund")
+        save(meals,"2026-08-03","2")
+        save(travel,"2026-08-03",null)
+        save(travel,"2026-08-04","5")
+        save(travel,"2026-08-04","5","refund")
+        val summary=db.dailySpending("2026-08-01","2026-08-04")
+        val days=summary.getJSONArray("points").objects()
+        assertEquals("28",days[0].s("value"))
+        assertTrue(days[1].isNull("value"))
+        assertTrue(days[2].isNull("value"))
+        assertEquals("0",days[3].s("value"))
+        assertEquals(1,summary.getInt("emptyDays"))
+        assertEquals(1,summary.getInt("incompleteDays"))
+    }
+
     @Test fun proposedEditCannotReuseAStaleReview() {
         val metricId = metric()
         val result = actions.single("atlas.record", obj("metricId" to metricId, "value" to "65.2", "date" to "2026-11-05"))

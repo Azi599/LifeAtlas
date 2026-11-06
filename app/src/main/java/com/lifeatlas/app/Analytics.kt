@@ -55,17 +55,21 @@ import java.time.YearMonth
         TextButton(onClick={val ym=runCatching{YearMonth.parse(month)}.getOrNull();if(ym!=null)vm.action("atlas.report",obj("title" to "${metric.s("title")} $month 报告","metrics" to org.json.JSONArray().put(metric.s("id")),"from" to ym.atDay(1).toString(),"to" to ym.atEndOfMonth().toString()),"生成月度报告")}){Text("保存月度报告")}
     }
 }
-@Composable fun Trend(points:List<JSONObject>,unit:String,type:String="line") {
+@Composable fun Trend(points:List<JSONObject>,unit:String,type:String="line",breakAtMissing:Boolean=false) {
     val data=remember(points){points.mapNotNull{p->val v=p.s("value").toDoubleOrNull();val d=runCatching{LocalDate.parse(p.s("date")).toEpochDay()}.getOrNull();if(v!=null && v.isFinite() && d!=null) d to v else null}}
     if(data.isEmpty()) return
     val scale=remember(data,type){chartScale(data.map{it.second},type=="bar")}
+    val dates=remember(points,breakAtMissing){
+        if(breakAtMissing) points.mapNotNull{runCatching{LocalDate.parse(it.s("date")).toEpochDay()}.getOrNull()}
+        else emptyList()
+    }
     val density=LocalDensity.current;val textPx=with(density){11.sp.toPx()};val accent=MaterialTheme.colorScheme.primary;val labelColor=readableColor(MaterialTheme.colorScheme.onSurfaceVariant,LocalAtlasBackground.current).toArgb();val grid=LocalAtlasTokens.current.chartGrid
     Column {Text(listOf(when(type){"bar"->"每日柱状图";"heatmap"->"按日分布";else->"日趋势"},unit).filter{it.isNotBlank()}.joinToString(" · "),style=MaterialTheme.typography.titleMedium)
         if(scale.offset!=0.0)Text("纵轴基准 "+java.math.BigDecimal.valueOf(scale.offset).stripTrailingZeros().toPlainString(),style=MaterialTheme.typography.bodySmall)
         Canvas(Modifier.fillMaxWidth().height(210.dp).testTag("trend-chart")) {
             val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=labelColor;textSize=textPx}
             val left=maxOf(36.dp.toPx(),scale.ticks.maxOf{paint.measureText(it)}+10.dp.toPx()).coerceAtMost(size.width*.5f);val top=16.dp.toPx();val right=size.width-12.dp.toPx();val bottom=size.height-38.dp.toPx();val width=right-left;val height=bottom-top
-            val minDay=data.minOf{it.first};val maxDay=data.maxOf{it.first};val dx=(maxDay-minDay).coerceAtLeast(1).toDouble()
+            val minDay=dates.minOrNull() ?: data.minOf{it.first};val maxDay=dates.maxOrNull() ?: data.maxOf{it.first};val dx=(maxDay-minDay).coerceAtLeast(1).toDouble()
             val min=scale.minimum;val max=scale.maximum;val span=max-min
             fun x(day:Long)=left+when {
                 type=="bar" -> ((day-minDay+0.5)/(dx+1)*width).toFloat().let{if(maxDay==minDay) width/2 else it}
@@ -84,7 +88,7 @@ import java.time.YearMonth
                 drawContext.canvas.nativeCanvas.drawText(label,left,size.height-10.dp.toPx(),paint)
             }
             else if(type=="bar")data.filter{it.second!=0.0}.forEach{(d,v)->val zero=y(0.0);val yy=y(v);val bar=(width/((dx+1)*1.5)).toFloat().coerceAtMost(20.dp.toPx()).coerceAtLeast(0.5f);drawRect(accent,Offset(x(d)-bar/2,minOf(zero,yy)),Size(bar,kotlin.math.abs(yy-zero).coerceAtLeast(2f)))}
-            else {data.zipWithNext().forEach{(a,b)->drawLine(accent,Offset(x(a.first),y(a.second)),Offset(x(b.first),y(b.second)),2.dp.toPx())};data.forEach{drawCircle(accent,3.dp.toPx(),Offset(x(it.first),y(it.second)))}}
+            else {data.zipWithNext().forEach{(a,b)->if(!breakAtMissing || b.first-a.first==1L)drawLine(accent,Offset(x(a.first),y(a.second)),Offset(x(b.first),y(b.second)),2.dp.toPx())};data.forEach{drawCircle(accent,3.dp.toPx(),Offset(x(it.first),y(it.second)))}}
         }
     }
 }

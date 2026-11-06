@@ -12,9 +12,9 @@ private class DailyBucket {
     fun add(value:BigDecimal?,weight:BigDecimal?,method:String) {if(value==null){missing++;return};count++;sum+=value;last=value;min=min?.min(value) ?: value;max=max?.max(value) ?: value;if(method=="MEDIAN")values.add(value);if(weight!=null){require(weight>=BigDecimal.ZERO);weighted+=value*weight;weights+=weight}}
     fun result(method:String):BigDecimal?=when(method){"COUNT"->(count+missing).toBigDecimal();"UNION_DURATION"->if(intervals.isEmpty())null else MathEngine.union(intervals).toBigDecimal().movePointLeft(3);"WEIGHTED_MEAN"->if(weights.signum()==0)null else weighted.divide(weights,MathContext.DECIMAL128);"LAST_SNAPSHOT"->last;"MIN"->min;"MAX"->max;"MEDIAN"->MathEngine.median(values);"MEAN"->if(count==0L)null else sum.divide(count.toBigDecimal(),MathContext.DECIMAL128);else->if(count==0L)null else sum}
 }
-fun AtlasStore.dailySeries(metric:String,from:String,to:String):List<JSONObject> = synchronized(this) {
+fun AtlasStore.dailySeries(metric:String,from:String,to:String,methodOverride:String?=null):List<JSONObject> = synchronized(this) {
     val begin=LocalDate.parse(from);val finish=LocalDate.parse(to);require(begin<=finish && java.time.temporal.ChronoUnit.DAYS.between(begin,finish)<=36600){"日期范围无效"}
-    val c=config(metric);val method=c.s("dailyAggregate",if(c.s("kind")=="SNAPSHOT")"LAST_SNAPSHOT" else c.s("aggregate","SUM")).let{if(it in aggregateMethods)it else "SUM"}
+    val c=config(metric);val method=(methodOverride ?: c.s("dailyAggregate",if(c.s("kind")=="SNAPSHOT")"LAST_SNAPSHOT" else c.s("aggregate","SUM"))).let{if(it in aggregateMethods)it else "SUM"}
     val days=sortedMapOf<String,DailyBucket>();val lower=begin.atStartOfDay(ZoneId.systemDefault()).toInstant();val upper=finish.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant()
     val allocation=c.s("kind")=="ALLOCATION";val split=allocation && c.s("role")!="sleep"
     val where=if(split)"(local_date BETWEEN ? AND ? OR (start_at IS NOT NULL AND start_at<? AND end_at>?))"else "local_date BETWEEN ? AND ?"
