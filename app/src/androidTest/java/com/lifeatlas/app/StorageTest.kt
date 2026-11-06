@@ -2,6 +2,7 @@ package com.lifeatlas.app
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -120,6 +121,27 @@ class StorageTest {
         assertEquals("0",days[3].s("value"))
         assertEquals(1,summary.getInt("emptyDays"))
         assertEquals(1,summary.getInt("incompleteDays"))
+    }
+    @Test fun correlationUsesOnlyCompletePairedDays() {
+        fun create(title:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,"config" to obj("kind" to "CHANGE","unit" to "次","aggregate" to "SUM")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val a=create("观测甲")
+        val b=create("观测乙")
+        fun save(metric:String,date:String,value:String?){
+            actions.single("atlas.record",obj("metricId" to metric,"date" to date,"value" to value))
+        }
+        val day=LocalDate.now()
+        (0..3).forEach { offset ->
+            val date=day.minusDays(offset.toLong()).toString()
+            save(a,date,(offset+1).toString())
+            save(b,date,(2*offset+2).toString())
+            if(offset==3) save(a,date,null)
+        }
+        val plan=Offline.plan("分析最近10天观测甲和观测乙的相关性",db)!!
+        val result=actions.execute(plan).getJSONObject("steps").getJSONObject("s1")
+        assertEquals(3,result.getInt("samplePairs"))
+        assertEquals(1.0,result.getDouble("pearson"),1e-12)
     }
 
     @Test fun proposedEditCannotReuseAStaleReview() {
@@ -339,7 +361,7 @@ class StorageTest {
     @Test fun timerPauseRestartResumePersists(){
         val id=metric("ALLOCATION","SUM");val started=actions.single("time.start",obj("metricId" to id));val timer=started.getJSONObject("steps").getJSONObject("result").s("id");Thread.sleep(1100);actions.single("time.pause",obj("timerId" to timer));db.close();db=AtlasStore(context,"tests.db");actions=Actions(db);assertEquals("PAUSED",db.one("atlas_timers",timer)!!.s("state"));actions.single("time.resume",obj("timerId" to timer));Thread.sleep(1100);actions.single("time.stop",obj("timerId" to timer));assertTrue(db.facts(id).map{it.s("value").toBigDecimal()}.reduce{a,b->a+b}>=java.math.BigDecimal("2"))
     }
-    @Test fun millionRecordsMonthUsesIndexAndExactSum(){
+    @LargeTest @Test fun millionRecordsMonthUsesIndexAndExactSum(){
         val id=metric("CHANGE","SUM");val sql=db.writableDatabase;val t=now();sql.execSQL("INSERT INTO atlas_events(id,raw_input,source,created_at,updated_at,zone) VALUES ('fixture','benchmark','fixture',?,?,?)",arrayOf(t,t,"Asia/Shanghai"))
         val dates=(0 until 3650).map{LocalDate.of(2017,1,1).plusDays(it.toLong()).toString()};val statement=sql.compileStatement("INSERT INTO atlas_facts(id,event_id,metric_id,kind,value,local_date,precision,zone,created_at,updated_at) VALUES (?,'fixture',?,'CHANGE','0.01',?,'DATE','Asia/Shanghai',?,?)")
         val started=System.nanoTime();sql.beginTransaction();try{repeat(1_000_000){i->statement.clearBindings();statement.bindString(1,"fixture-${i.toString().padStart(7,'0')}");statement.bindString(2,id);statement.bindString(3,dates[i%dates.size]);statement.bindString(4,t);statement.bindString(5,t);statement.executeInsert()};sql.setTransactionSuccessful()}finally{sql.endTransaction();statement.close()}

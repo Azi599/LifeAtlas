@@ -30,6 +30,8 @@ object Offline {
             titles=setOf("餐饮","餐饮支出","伙食费","餐费"),defaultTitle="餐饮支出",defaultUnit="元"),
         Vocabulary(listOf("交通费","交通支出","打车费"),role="expense",titles=setOf("交通支出","交通费"),defaultTitle="交通支出",defaultUnit="元"),
         Vocabulary(listOf("步数","走了","步行步数"),unit="步",defaultTitle="步数",defaultUnit="步",defaultKind="SNAPSHOT"),
+        Vocabulary(listOf("喝咖啡","咖啡","咖啡杯数"),unit="杯"),
+        Vocabulary(listOf("喝咖啡","咖啡","咖啡次数","咖啡饮用次数"),unit="次"),
         Vocabulary(listOf("兼职挣了","兼职赚了","兼职收入"),role="income",titles=setOf("兼职收入"),defaultTitle="兼职收入",defaultUnit="元"),
         Vocabulary(listOf("花了","消费了","支出了","消费","支出"),role="expense"),
         Vocabulary(listOf("收入","进账","赚了","收到了","兼职挣了","兼职赚了","挣了"),role="income")
@@ -85,6 +87,7 @@ object Offline {
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
     private val rangeLead = Regex("^(最近[0-9]{1,2}天|近[0-9]{1,2}天|最近七天|近七天|本月|这个月|上月|上个月|今天|昨天|前天)")
     private val drawChart = Regex("^(?:请|帮我)?(?:画|生成|展示)(?:一张|一个)?(.+?)(?:的)?(折线图|柱状图|趋势图)$")
+    private val correlation = Regex("^(?:看看|查看|分析|计算)(.+?)(?:有没有相关性|是否相关|的相关性)(?:[,，](?:但)?不要把相关说成因果)?$")
     private val measuredBalance = Regex("^(.+?)(?:现在)?(?:的)?(?:实际余额|实测余额)(?:是|为|有)?(.+)$")
     private val transfer = Regex("^从(.+?)(?:转账|转)(.+?)(?:转到|到|至)(.+)$")
     private val balanceQuery = Regex("^(?:自|从)上一次(.+?)余额实测以来[,，]净变动多少[,，]现在推算余额多少$")
@@ -153,6 +156,22 @@ object Offline {
                 metric to command(input,"atlas.chart",obj("metricId" to metric.s("id"),"from" to from.toString(),
                     "to" to to.toString(),"chart" to if(type=="柱状图") "bar" else "line"))
             })
+        }
+        correlation.matchEntire(compact(request))?.let { match ->
+            val subject=match.groupValues[1]
+            val range=rangeLead.find(subject) ?: return question(input,"要比较哪段日期？")
+            val (from,to)=dateRange(range.value,today) ?: return null
+            val names=subject.drop(range.value.length).trimStart('的').split(Regex("和|与"),limit=2)
+            if(names.size!=2) return question(input,"要比较哪两个指标？")
+            val first=namedMetrics(unquote(names[0]),metrics)
+            val second=namedMetrics(unquote(names[1]),metrics)
+            if(first.size>8 || second.size>8) return question(input,"名称对应多个指标，请提供完整名称")
+            val options=first.flatMap{x->second.filter{it.s("id")!=x.s("id")}.map{y->
+                obj("title" to "${x.s("title")} · ${y.s("title")}","plan" to command(input,"atlas.correlation",obj(
+                    "xMetricId" to x.s("id"),"yMetricId" to y.s("id"),"from" to from.toString(),"to" to to.toString())))
+            }}
+            if(options.size==1) return options.single().getJSONObject("plan")
+            return question(input,"请选择要比较的两个指标",options)
         }
         measuredBalance.matchEntire(compact(request))?.let { match ->
             val (rawName,amount)=match.destructured

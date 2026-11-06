@@ -42,7 +42,15 @@ import org.json.JSONObject
                 records.forEach{r->OutlinedCard(Modifier.fillMaxWidth().clickable{onFact(r)}){Column(Modifier.padding(12.dp)){Text(r.s("metric_title"));Text("${r.s("local_date")}  ${r.s("value","未填写")}")}}}
             }
             if(value.has("method") && value.has("metricId")) Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(objects.firstOrNull{it.s("id")==value.s("metricId")}?.s("title") ?: "统计结果");Text("${value.s("value","暂无数据")} ${value.s("unit")}",style=MaterialTheme.typography.headlineSmall);Text("${methodName(value.s("method"))} · ${value.optLong("usedCount",value.optLong("count"))} 条")}}
-            if(value.has("pearson"))OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("相关系数 ${value.s("pearson","无法计算")}");Text("配对样本 ${value.optInt("samplePairs")}")}}
+            if(value.has("pearson"))OutlinedCard(Modifier.fillMaxWidth()){
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                    val coefficient=value.s("pearson").toBigDecimalOrNull()?.setScale(3,java.math.RoundingMode.HALF_UP)
+                    Text(coefficient?.let{"相关系数 ${it.toPlainString()}"} ?: "无法计算相关系数",style=MaterialTheme.typography.titleMedium)
+                    Text("配对样本 ${value.optInt("samplePairs")} 天")
+                    Text("${value.s("from")} — ${value.s("to")}",style=MaterialTheme.typography.bodySmall)
+                    Text(value.s("definition"),style=MaterialTheme.typography.bodySmall)
+                }
+            }
             if(value.optBoolean("occupancy")) {
                 OutlinedCard(Modifier.fillMaxWidth()){
                     Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){

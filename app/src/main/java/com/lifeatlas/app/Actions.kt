@@ -437,8 +437,17 @@ class Actions(val store:AtlasStore) {
             "atlas.requestRollback","atlas.retryBuild"->{val row=store.one("atlas_builds",a.getString("buildId")) ?: error("构建任务不存在");val spec=JSONObject(row.s("request"));if(action=="atlas.requestRollback"){val commit=spec.s("baselineCommit");require(commit.matches(Regex("[a-f0-9]{40}"))){"此构建尚未保存可回退基线"};spec.put("kind","rollback").put("sourceCommit",commit).put("title","回退 · "+spec.s("title"))};spec.put("previousBuildId",row.s("id"));return dispatch("atlas.requestBuild",spec)}
             "atlas.requestBuild" -> {val id=uid();store.put("atlas_builds",obj("id" to id,"request" to a.toString(),"status" to "AWAITING_SERVICE","remote_id" to null,"artifact_url" to null,"detail" to "","created_at" to now(),"updated_at" to now()));return obj("id" to id,"status" to "AWAITING_SERVICE")}
             "atlas.correlation" -> {
-                fun byDay(id:String):Map<String,Double> = store.dailySeries(id,a.getString("from"),a.getString("to")).mapNotNull{p->p.s("value").toDoubleOrNull()?.takeIf{it.isFinite()}?.let{p.s("date") to it}}.toMap()
-                val x=byDay(a.getString("xMetricId"));val y=byDay(a.getString("yMetricId"));val pairs=x.keys.intersect(y.keys).map{x.getValue(it) to y.getValue(it)};return obj("pearson" to MathEngine.pearson(pairs),"samplePairs" to pairs.size,"definition" to "共同有数据日期；按各指标的日统计规则对齐；相关性不表明因果")
+                val from=a.getString("from")
+                val to=a.getString("to")
+                fun byDay(id:String):Map<String,Double> = store.dailySeries(id,from,to)
+                    .filter{it.optLong("missingCount")==0L}
+                    .mapNotNull{point->point.s("value").toDoubleOrNull()?.takeIf{it.isFinite()}?.let{point.s("date") to it}}.toMap()
+                val first=a.getString("xMetricId")
+                val second=a.getString("yMetricId")
+                require(first!=second){"请选择两个不同指标"}
+                val x=byDay(first);val y=byDay(second);val pairs=x.keys.intersect(y.keys).map{x.getValue(it) to y.getValue(it)}
+                return obj("pearson" to MathEngine.pearson(pairs),"samplePairs" to pairs.size,"from" to from,"to" to to,
+                    "definition" to "按天配对，只纳入两个指标都有完整数值的日期。相关性不表明因果。")
             }
             else -> {
                 val active=store.query("SELECT manifest FROM atlas_plugins WHERE status='ACTIVE'")
