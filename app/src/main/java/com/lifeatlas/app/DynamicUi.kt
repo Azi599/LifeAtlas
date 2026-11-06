@@ -11,6 +11,39 @@ import org.json.JSONObject
 import java.time.YearMonth
 
 fun componentRange(component:JSONObject):Pair<String,String> {val month=YearMonth.now();return component.s("from").ifBlank{month.atDay(1).toString()} to component.s("to").ifBlank{month.atEndOfMonth().toString()}}
+internal fun analysisComponents(view:JSONObject):List<JSONObject> {
+    if(view.s("type")!="VIEW") return emptyList()
+    val config=JSONObject(view.s("config","{}"))
+    return when(config.s("component")) {
+        "chart" -> if(config.s("chart")=="list") emptyList() else listOf(config.copyJson().put("title",view.s("title")))
+        "schema" -> config.optJSONArray("components")?.objects().orEmpty().filter{it.s("component") in setOf("chart","summary")}
+        else -> emptyList()
+    }
+}
+
+@Composable
+internal fun PinnedAnalysisCard(
+    view:JSONObject,state:AtlasState,vm:AtlasModel,onPinFirst:(()->Unit)?,onHide:()->Unit
+) {
+    val components=analysisComponents(view)
+    val charts=components.filter{it.s("component")=="chart"}
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Text(view.s("title"),style=MaterialTheme.typography.titleLarge)
+            ActionRow {
+                if(onPinFirst!=null) OutlinedButton(onClick=onPinFirst){Text("置顶")}
+                OutlinedButton(onClick=onHide){Text("隐藏")}
+            }
+            if(charts.size==1) {
+                Pick("图表",listOf("line" to "折线图","bar" to "柱状图","heatmap" to "热力图"),charts.single().s("chart","line")){ type ->
+                    vm.action("atlas.setChartType",obj("objectId" to view.s("id"),"chart" to type),"更改图表类型")
+                }
+            }
+            DynamicScreen(obj("components" to JSONArray(components)),state,vm,onRecord={},onOpen={})
+        }
+    }
+}
+
 @Composable fun DynamicScreen(config:JSONObject,state:AtlasState,vm:AtlasModel,onRecord:(JSONObject)->Unit,onOpen:(String)->Unit,onFact:(JSONObject)->Unit={}) {
     Column(verticalArrangement=Arrangement.spacedBy(20.dp)) {
         (config.optJSONArray("components") ?: JSONArray()).objects().forEach{component->
@@ -34,7 +67,10 @@ fun componentRange(component:JSONObject):Pair<String,String> {val month=YearMont
 @Composable private fun ChartComponent(component:JSONObject,metric:JSONObject,state:AtlasState,vm:AtlasModel) {
     var points by remember{mutableStateOf<List<JSONObject>>(emptyList())};var loading by remember{mutableStateOf(true)};var error by remember{mutableStateOf("")};val running=state.timers.any{it.s("metric_id")==metric.s("id") && it.s("state")=="RUNNING"}
     LaunchedEffect(component.toString(),metric.s("id"),state.revision,running){do {try{val range=componentRange(component);points=vm.chart(metric.s("id"),range.first,range.second);error=""}catch(e:Exception){if(e is kotlinx.coroutines.CancellationException)throw e;error=e.message.orEmpty();break}finally{loading=false};if(running)kotlinx.coroutines.delay(1000)}while(running)}
-    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(component.s("title").ifBlank{metric.s("title")},style=MaterialTheme.typography.titleMedium);if(loading)LinearProgressIndicator(Modifier.fillMaxWidth())else if(points.isEmpty())Text("该范围暂无数据")else Trend(points,JSONObject(metric.s("config")).s("unit"),component.s("chart","line"));if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error)}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(component.s("title").ifBlank{metric.s("title")},style=MaterialTheme.typography.titleMedium)
+        val range=componentRange(component)
+        Text("${metric.s("title")} · ${range.first} — ${range.second}",style=MaterialTheme.typography.bodySmall)
+        if(loading)LinearProgressIndicator(Modifier.fillMaxWidth())else if(points.isEmpty())Text("该范围暂无数据")else Trend(points,JSONObject(metric.s("config")).s("unit"),component.s("chart","line"));if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error)}
 }
 @Composable private fun HistoryComponent(component:JSONObject,metric:JSONObject,state:AtlasState,vm:AtlasModel,onFact:(JSONObject)->Unit) {
     var facts by remember{mutableStateOf<List<JSONObject>>(emptyList())};var offset by remember(component.toString()){mutableIntStateOf(0)};var error by remember{mutableStateOf("")}

@@ -81,6 +81,17 @@ internal class PlanningContext(private val original: JSONObject) {
             listOf("kind", "unit", "aggregate", "role", "fields").forEach { key ->
                 config.opt(key)?.let { put(key, it) }
             }
+            if(row.s("type")=="VIEW") {
+                listOf("component","chart","from","to").forEach { key -> config.opt(key)?.let { put(key,it) } }
+                if(config.s("metricId").isNotBlank()) put("metricId",alias(config.s("metricId"),"m"))
+                config.optJSONArray("components")?.objects()?.take(20)?.let { components ->
+                    put("components",JSONArray(components.map{ c ->
+                        obj("component" to c.s("component"),"title" to c.opt("title"),"chart" to c.opt("chart"),
+                            "from" to c.opt("from"),"to" to c.opt("to"),
+                            "metricId" to c.s("metricId").takeIf{it.isNotBlank()}?.let{alias(it,"m")})
+                    }))
+                }
+            }
         }
     }
 

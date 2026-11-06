@@ -138,4 +138,13 @@ class OfflineTest {
         assertEquals("finance.cashflow",total.getJSONArray("steps").getJSONObject(0).s("actionId"))
         assertTrue(args(total).optBoolean("onlyExpense"))
     }
+    @Test fun oldDashboardWordingCreatesAnAnalysisChartWithAConcreteSource() {
+        val plan=Offline.plan("在分析页新增一个显示本月阅读页数的图表",listOf(pages),today)!!
+        val steps=plan.getJSONArray("steps").objects()
+        assertEquals(listOf("atlas.createView","atlas.layout"),steps.map{it.s("actionId")})
+        val chart=steps[0].getJSONObject("args").getJSONArray("components").getJSONObject(0)
+        assertEquals("pages",chart.s("metricId"))
+        assertEquals("2026-11-01",chart.s("from"))
+        assertEquals("2026-11-06",chart.s("to"))
+    }
 }

@@ -59,6 +59,8 @@ class Planner(private val actions: Actions) {
             atlas.installPlugin: args 内放 manifest。示例结构：
             {"id":"feature.sample","title":"项目名称","version":1,"metrics":[{"key":"quantity","title":"指标名称","kind":"CHANGE","unit":"次","aggregate":"SUM","fields":[{"id":"label","title":"名称","type":"text"}]}],"screens":[{"title":"记录与趋势","components":[{"component":"form","metricKey":"quantity"},{"component":"history","metricKey":"quantity"},{"component":"chart","metricKey":"quantity","chart":"line"}]}]}
             需要其他操作时查询 atlas.capabilities。原生能力走 atlas.requestBuild，外部构建步骤使用 atomic=false。
+            输入页仅用于录入、核对和回执。用户提到首页图表或统计卡片时，把它们放在分析页。
+            新图表用 atlas.createView，随后用 atlas.layout 固定到分析页。隐藏和排序只改布局。修改柱状图、折线图或热力图使用 atlas.setChartType。
             界面使用中文实际名称和数据，去掉功能介绍与底层术语。
         """.trimIndent() + if (context.has("imageText")) """
 

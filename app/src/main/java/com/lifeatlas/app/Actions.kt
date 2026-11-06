@@ -40,7 +40,8 @@ class Actions(val store:AtlasStore) {
         "atlas.updatePlugin" to "升级功能包 args manifest，同 key 保留数据；单位转换需 migrationFactor 显式确认，计算规则变化需 historyMode(recalculate/preserve)",
         "atlas.setPluginStatus" to "启停已安装插件 args pluginId,enabled",
         "atlas.rollbackPlugin" to "回退插件上一版本 args pluginId；通过操作历史同步恢复配置和记录",
-        "atlas.layout" to "设置首页对象卡 args objectId,position,hidden",
+        "atlas.layout" to "固定或调整分析图表 args objectId,position?,first?,hidden?；隐藏不删除数据",
+        "atlas.setChartType" to "修改分析图表类型 args objectId,chart(line/bar/heatmap),componentIndex?",
         "atlas.setWorkflowStatus" to "启停工作流 args id,enabled",
         "atlas.deleteWorkflow" to "删除工作流 args id，可撤销",
         "atlas.workflow" to "创建或升级版本化工作流 args id?,title,spec={triggerMetricId,condition?:表达式,steps:[{actionId,args}]}，保存记录时执行一次",
@@ -339,7 +340,36 @@ class Actions(val store:AtlasStore) {
                 target.getJSONArray("metrics").objects().forEach{metric->current.getJSONArray("metrics").objects().firstOrNull{it.s("key")==metric.s("key")}?.let{latest->if(latest.s("unit")!=metric.s("unit")) metric.put("migrationFactor",BigDecimal.ONE.divide(decimal(latest.getString("migrationFactor")),java.math.MathContext.DECIMAL128).toPlainString())}}
                 return install(target,true)
             }
-            "atlas.layout" -> {val id=a.getString("objectId");require(store.one("atlas_objects",id)!=null);store.put("atlas_layout",obj("id" to id,"object_id" to id,"position" to a.optInt("position"),"hidden" to if(a.optBoolean("hidden")) 1 else 0));return obj("id" to id)}
+            "atlas.layout" -> {
+                val id=a.getString("objectId")
+                require(store.one("atlas_objects",id)!=null)
+                val existing=store.one("atlas_layout",id)
+                val position=if(a.optBoolean("first")) {
+                    val first=store.query("SELECT MIN(position) position FROM atlas_layout WHERE hidden=0").firstOrNull()?.optInt("position") ?: 0
+                    first.coerceAtLeast(Int.MIN_VALUE+1)-1
+                } else a.optInt("position",existing?.optInt("position") ?: 0)
+                val hidden=if(a.optBoolean("hidden",existing?.optInt("hidden")==1)) 1 else 0
+                store.put("atlas_layout",obj("id" to id,"object_id" to id,"position" to position,"hidden" to hidden))
+                return obj("id" to id)
+            }
+            "atlas.setChartType" -> {
+                val id=a.getString("objectId")
+                val view=store.one("atlas_objects",id) ?: error("图表不存在")
+                require(view.s("type")=="VIEW" && view.optInt("archived")==0)
+                val chart=a.getString("chart")
+                require(chart in setOf("line","bar","heatmap")) {"请选择柱状图、折线图或热力图"}
+                val config=JSONObject(view.s("config"))
+                val target=when(config.s("component")) {
+                    "chart" -> config.takeUnless{it.s("chart")=="list"}
+                    "schema" -> config.getJSONArray("components").let{items->
+                        if(a.has("componentIndex")) items.optJSONObject(a.getInt("componentIndex"))?.takeIf{it.s("component")=="chart"}
+                        else items.objects().singleOrNull{it.s("component")=="chart"}
+                    }
+                    else -> null
+                } ?: error("请选择页面内的具体图表")
+                target.put("chart",chart)
+                return dispatch("atlas.updateObject",obj("id" to id,"config" to config))
+            }
             "atlas.workflow" -> {
                 val spec=a.getJSONObject("spec").copyJson();require((spec.optJSONArray("steps")?.length() ?: 0) in 1..10);require(store.one("atlas_objects",spec.getString("triggerMetricId"))?.s("type")=="METRIC"){"触发指标不存在"}
                 val id=a.s("id").ifBlank{uid()};require(id.length<=180);val before=store.one("atlas_workflows",id);spec.put("version",(before?.let{JSONObject(it.s("spec")).optInt("version",1)} ?: 0)+1)
