@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -136,8 +136,15 @@ private fun CompositionPie(title: String, entries: List<ChartSlice>, unit: Strin
         else entries.take(5) + ChartSlice("其他",MathEngine.sum(entries.drop(5).map{it.value}))
     }
     val total = MathEngine.sum(slices.map{it.value})
-    val colors = MaterialTheme.colorScheme.run {
-        listOf(primary,tertiary,secondary,lerp(primary,tertiary,.55f),outline,error)
+    val primary = MaterialTheme.colorScheme.primary
+    val lightBackground = LocalAtlasBackground.current.luminance() > .45f
+    val colors = remember(primary,lightBackground) {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(primary.toArgb(),hsv)
+        listOf(primary) + listOf(100f,190f,280f,45f,235f).mapIndexed { index, offset ->
+            Color.hsl((hsv[0]+offset)%360f,.44f,
+                if(lightBackground) .42f+index%2*.07f else .62f+index%2*.06f)
+        }
     }
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text(title,style=MaterialTheme.typography.titleMedium)
@@ -194,8 +201,8 @@ private fun CompositionPie(title: String, entries: List<ChartSlice>, unit: Strin
             if (snapshot.spending.isNotEmpty()) {
                 Pick("构成",listOf("records" to "记录条数","spending" to "支出净额"),if(showSpending) "spending" else "records"){distribution=it}
             }
-            if (showSpending) CompositionPie("$month 正净支出构成",snapshot.spending,"元")
-            else CompositionPie("$month 记录构成",snapshot.counts.map{ChartSlice(it.s("title"),it.optLong("count").toBigDecimal())},"条")
+            if (showSpending) CompositionPie("$month 支出构成",snapshot.spending,"元")
+            else CompositionPie("$month 指标记录构成",snapshot.counts.map{ChartSlice(it.s("title"),it.optLong("count").toBigDecimal())},"条")
         }
         if (metrics.isNotEmpty()) {
             Pick("选择指标",metrics.map{it.s("id") to it.s("title")},active?.s("id").orEmpty()){metricId=it}

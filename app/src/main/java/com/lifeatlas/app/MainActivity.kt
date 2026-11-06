@@ -182,9 +182,9 @@ class MainActivity:ComponentActivity() {
                 }
                 "history" -> timelineItems(vm,state,onFact={editingFact=it},onEvent={editingEvent=it})
                 "analytics" -> {
-                    item{ActionRow {OutlinedButton(onClick={financeDialog="transfer"}){Text("转账")};OutlinedButton(onClick={financeDialog="balance"}){Text("余额")};OutlinedButton(onClick={correlationDialog=true}){Text("相关性分析")}}}
                     items(state.timers,key={it.s("id")}){TimerCard(it,objects,vm)}
                     item{Analytics(vm,state)}
+                    item{ActionRow {OutlinedButton(onClick={financeDialog="transfer"}){Text("转账")};OutlinedButton(onClick={financeDialog="balance"}){Text("余额")};OutlinedButton(onClick={correlationDialog=true}){Text("相关性分析")}}}
                     state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                 }
                 "settings" -> {
