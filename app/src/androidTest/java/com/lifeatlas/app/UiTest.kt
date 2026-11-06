@@ -133,6 +133,36 @@ class UiTest {
         rule.onNode(hasText("3 杯") and hasAnyAncestor(row)).assertIsDisplayed()
     }
 
+    @Test fun pinnedChartCanChangeStyleAndHideWithoutDeletingData() {
+        val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        val date=java.time.LocalDate.now().toString()
+        val metric=vm.actions.single("atlas.createObject",obj("type" to "METRIC","title" to "测量刻度",
+            "config" to obj("kind" to "CHANGE","unit" to "格","aggregate" to "SUM")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        vm.actions.single("atlas.record",obj("metricId" to metric,"value" to "12","date" to date))
+        val view=vm.actions.single("atlas.createView",obj("title" to "刻度图表",
+            "components" to JSONArray().put(obj("component" to "chart","metricId" to metric,"chart" to "line"))))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        runBlocking{vm.refresh().join()}
+        rule.onNodeWithTag("tab-settings").performClick()
+        rule.onNodeWithText("空间管理").performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("刻度图表"))
+        rule.onNodeWithText("刻度图表").performClick()
+        rule.onNodeWithText("固定到分析").performScrollTo().performClick()
+        rule.waitUntil(10000){vm.store.one("atlas_layout",view)?.optInt("hidden")==0 && !vm.ui.value.busy}
+        rule.onNodeWithTag("tab-analytics").performClick()
+        rule.onNodeWithText("图表：折线图").performScrollTo().performClick()
+        rule.onNode(hasText("柱状图") and hasAnyAncestor(isDialog())).performClick()
+        rule.waitUntil(10000){
+            val config=org.json.JSONObject(vm.store.one("atlas_objects",view)!!.s("config"))
+            config.getJSONArray("components").getJSONObject(0).s("chart")=="bar" && !vm.ui.value.busy
+        }
+        rule.onNodeWithText("隐藏").performScrollTo().performClick()
+        rule.waitUntil(10000){vm.store.one("atlas_layout",view)?.optInt("hidden")==1 && !vm.ui.value.busy}
+        org.junit.Assert.assertNotNull(vm.store.one("atlas_objects",view))
+        org.junit.Assert.assertEquals("12",vm.store.facts(metric).single().s("value"))
+    }
+
     private fun closeKeyboard(){
         rule.activity.runOnUiThread{
             rule.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime())

@@ -101,6 +101,11 @@ class MainActivity:ComponentActivity() {
     var spaceRows by remember{mutableStateOf<List<JSONObject>>(emptyList())};var spaceSearch by rememberSaveable{mutableStateOf("")};var spaceOffset by rememberSaveable{mutableIntStateOf(0)};var archived by rememberSaveable{mutableStateOf(false)}
     val objects=(state.objects+objectCache.values).distinctBy{it.s("id")}
     val chosen=objects.firstOrNull{it.s("id")==selected}
+    val analysisLayout=state.analysisLayout.associateBy{it.s("object_id")}
+    fun setChartLayout(id:String,position:Int,hidden:Boolean) {
+        vm.action("atlas.layout",obj("objectId" to id,"position" to position,"hidden" to hidden),
+            if(hidden) "隐藏分析图表" else "更新分析图表位置")
+    }
     LaunchedEffect(page,selected,spaceSearch,spaceOffset,archived,state.revision){
         if (page != "spaces") return@LaunchedEffect
         val rows=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){
@@ -166,6 +171,14 @@ class MainActivity:ComponentActivity() {
                 "spaces" -> {
                     item{ActionRow{if(selected!=null) TextButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")} else TextButton(onClick={page=spaceReturn}){Text("返回")};TextButton(onClick={create=true}){Text("新建")};if(chosen!=null) TextButton(onClick={edit=chosen}){Text("管理")}}}
                     item{TextButton(onClick={editingPage=null;pageBuilder=true}){Text("新建页面")};if(chosen?.s("type")=="VIEW" && JSONObject(chosen.s("config")).s("component")=="schema")TextButton(onClick={editingPage=chosen;pageBuilder=true}){Text("编辑页面")}}
+                    if(chosen!=null && analysisComponents(chosen).isNotEmpty()) item {
+                        val saved=analysisLayout[chosen.s("id")]
+                        val pinned=saved!=null && saved.optInt("hidden")==0
+                        OutlinedButton(onClick={
+                            val next=(state.analysisLayout.maxOfOrNull{it.optInt("position")} ?: -1)+1
+                            setChartLayout(chosen.s("id"),saved?.optInt("position") ?: next,pinned)
+                        }){Text(if(pinned) "从分析隐藏" else "固定到分析")}
+                    }
                     if(chosen?.s("type")=="METRIC") {
                         item{MetricPanel(chosen,vm,state.revision,onRecord={record=chosen})}
                     } else if(chosen?.s("type")=="VIEW") {
@@ -188,6 +201,17 @@ class MainActivity:ComponentActivity() {
                 "history" -> timelineItems(vm,state,onFact={editingFact=it},onEvent={editingEvent=it})
                 "analytics" -> {
                     items(state.timers,key={it.s("id")}){TimerCard(it,objects,vm)}
+                    val pinned = state.analysisLayout.filter{it.optInt("hidden")==0}.mapNotNull { layout ->
+                        objects.firstOrNull{it.s("id")==layout.s("object_id") && it.optInt("archived")==0 && analysisComponents(it).isNotEmpty()}
+                    }
+                    items(pinned,key={"analysis-"+it.s("id")}) { view ->
+                        val id=view.s("id")
+                        val first=pinned.first().s("id")
+                        PinnedAnalysisCard(view,state,vm,onPinFirst=if(id==first) null else ({
+                            val top=state.analysisLayout.minOfOrNull{it.optInt("position")} ?: 0
+                            setChartLayout(id,top-1,false)
+                        }),onHide={setChartLayout(id,analysisLayout[id]?.optInt("position") ?: 0,true)})
+                    }
                     item{Analytics(vm,state)}
                     item{ActionRow {OutlinedButton(onClick={financeDialog="transfer"}){Text("转账")};OutlinedButton(onClick={financeDialog="balance"}){Text("余额")};OutlinedButton(onClick={correlationDialog=true}){Text("相关性分析")}}}
                     state.result?.let{r->item{ExecutionResults(r,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
@@ -273,7 +297,7 @@ fun kindName(s:String)=mapOf("SNAPSHOT" to "逐次测量","CHANGE" to "逐笔累
     OutlinedCard{Column(Modifier.padding(16.dp)){Text(JSONObject(b.s("request")).s("title","原生能力请求"));Text(buildState(b.s("status")));if(b.s("detail").isNotBlank()) Text(b.s("detail"));if(b.s("remote_id").isEmpty())TextButton(onClick={vm.build(b.s("id"))}){Text("提交云端构建")} else TextButton(onClick={vm.buildStatus(b.s("id"))}){Text("更新构建状态")};if(b.s("status") in setOf("FAILED","INTERRUPTED"))TextButton(onClick={vm.action("atlas.retryBuild",obj("buildId" to b.s("id")),"重试构建")}){Text("重新构建")};if(b.s("status")=="READY_FOR_REVIEW" && JSONObject(b.s("request")).s("baselineCommit").isNotBlank())TextButton(onClick={vm.action("atlas.requestRollback",obj("buildId" to b.s("id")),"建立回退构建")}){Text("构建先前版本")};val preview=JSONObject(b.s("request")).s("previewUrl");if(preview.startsWith("https://"))TextButton(onClick={context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(preview)))}){Text("查看变更")};if(b.s("status")=="READY_FOR_REVIEW" && b.s("remote_id").startsWith("gh:") && BuildConfig.CHANNEL=="standalone")Button(onClick={vm.installBuild(b.s("id"))}){Text("验证并安装")};if(b.s("artifact_url").startsWith("https://"))TextButton(onClick={context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(b.s("artifact_url"))))}){Text("查看构建产物")}}}
 }
 
-fun actionName(id:String)=mapOf("atlas.createObject" to "创建对象","atlas.updateObject" to "修改对象","atlas.record" to "记录数据","atlas.editRecord" to "修改记录","atlas.deleteRecord" to "删除记录","atlas.restoreRecord" to "恢复记录","atlas.deleteObject" to "归档","atlas.query" to "查询记录","atlas.aggregate" to "统计数据","atlas.report" to "生成报告","atlas.createView" to "创建页面","atlas.layout" to "调整首页","atlas.rollbackPlugin" to "回退插件","atlas.requestBuild" to "建立扩展任务","finance.transfer" to "转账","time.start" to "开始计时","time.stop" to "结束计时")[id] ?: "执行操作"
+fun actionName(id:String)=mapOf("atlas.createObject" to "创建对象","atlas.updateObject" to "修改对象","atlas.record" to "记录数据","atlas.editRecord" to "修改记录","atlas.deleteRecord" to "删除记录","atlas.restoreRecord" to "恢复记录","atlas.deleteObject" to "归档","atlas.query" to "查询记录","atlas.aggregate" to "统计数据","atlas.report" to "生成报告","atlas.createView" to "创建页面","atlas.layout" to "调整分析图表","atlas.rollbackPlugin" to "回退插件","atlas.requestBuild" to "建立扩展任务","finance.transfer" to "转账","time.start" to "开始计时","time.stop" to "结束计时")[id] ?: "执行操作"
 fun pluginState(state:String)=mapOf("ACTIVE" to "已启用","DISABLED" to "已停用","SUPERSEDED" to "历史版本")[state] ?: state
 
 fun buildState(s:String)=mapOf("AWAITING_SERVICE" to "待提交构建","SUBMITTED" to "已提交","QUEUED" to "排队中","GENERATING" to "生成源码中","COMMITTING" to "提交源码中","BUILDING" to "编译与测试中","WAITING_APPROVAL" to "等待发行确认","READY_FOR_REVIEW" to "更新包已就绪","FAILED" to "构建失败","INTERRUPTED" to "任务已中断")[s] ?: s

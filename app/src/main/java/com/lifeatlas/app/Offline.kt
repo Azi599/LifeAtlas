@@ -64,6 +64,10 @@ object Offline {
     private val listDay = Regex("^(?:列出|查看)($dateWord)(?:的)?(?:所有)?记录$")
     private val createQuoted = Regex("^(?:新建|创建)(?:一个|个)?([“「\"][^”」\"]+[”」\"])(项目|目录|文件夹)$")
     private val localPrefix = Regex("^(?:现在断网|离线)[:：]\\s*")
+    private val addChart = Regex("^在(?:首页|分析页?)新增(?:一个)?(?:显示)?(本月|上月)(.+?)的图表$")
+    private val layoutChart = Regex("^把(?:首页|分析页?)?([“「\"][^”」\"]+[”」\"])(?:卡片|图表)(隐藏|移到(?:首页|分析页?)最前面)(?:[,，]数据别删)?$")
+    private val styleChart = Regex("^把(?:刚才那个|刚才的)?(.+?)图表(?:从(?:折线图|柱状图|热力图))?改成(折线图|柱状图|热力图)$")
+    private val openChart = Regex("^打开(?:刚才的)?(.+?)图表(?:[,，]告诉我数据来自哪个指标、哪个日期范围)?$")
     private val weightedMark = Regex("(\\d+)次([+-]?\\d+(?:\\.\\d+)?)分")
     private val weightedTotal = Regex("^假设有(\\d+)次")
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
@@ -146,6 +150,36 @@ object Offline {
                     .put("review",true)) }
                 return question(input,"识别到 $amount 元，请选择归属",options)
             }
+        }
+        addChart.matchEntire(request)?.let { match ->
+            val (range,name)=match.destructured
+            val targets=namedMetrics(name,metrics)
+            if(targets.isEmpty()) return question(input,"请选择图表使用的指标")
+            val (from,to)=dateRange(range,today) ?: return null
+            return choose(input,"图表使用哪个指标？",targets.map{metric->
+                val title=range+metric.s("title")
+                val view=command(input,"atlas.createView",obj("title" to title,"components" to JSONArray().put(obj(
+                    "component" to "chart","metricId" to metric.s("id"),"chart" to "line","from" to from.toString(),"to" to to.toString()
+                ))))
+                view.getJSONArray("steps").put(obj("stepId" to "s2","actionId" to "atlas.layout","args" to obj("objectId" to obj("\$ref" to "s1.id"),"hidden" to false)))
+                metric to view
+            })
+        }
+        layoutChart.matchEntire(request)?.let { match ->
+            val (name,action)=match.destructured
+            val view=findChart(name,spaces()) ?: return question(input,"请选择要调整的分析图表")
+            val hide=action=="隐藏"
+            return command(input,"atlas.layout",obj("objectId" to view.s("id"),"hidden" to hide,"first" to !hide))
+        }
+        styleChart.matchEntire(request)?.let { match ->
+            val (name,type)=match.destructured
+            val view=findChart(name,spaces()) ?: return question(input,"请选择要更改的图表")
+            val chart=when(type){"柱状图"->"bar";"热力图"->"heatmap";else->"line"}
+            return command(input,"atlas.setChartType",obj("objectId" to view.s("id"),"chart" to chart))
+        }
+        openChart.matchEntire(request)?.let { match ->
+            val view=findChart(match.groupValues[1],spaces()) ?: return question(input,"请选择要打开的图表")
+            return command(input,"atlas.navigate",obj("page" to "spaces","objectId" to view.s("id")))
         }
         createQuoted.matchEntire(request)?.let { match ->
             val (title,type)=match.destructured
@@ -384,6 +418,18 @@ object Offline {
     private fun unquote(value:String) = value.trim().trim('"','“','”','「','」')
     private fun findSpace(title:String,objects:List<JSONObject>):JSONObject? =
         objects.singleOrNull { it.s("type") in setOf("WORKSPACE","FOLDER","PROJECT") && it.s("title")==unquote(title) }
+
+    private fun findChart(title:String,objects:List<JSONObject>):JSONObject? {
+        val name=unquote(title)
+        if(name.isBlank()) return null
+        val charts=objects.filter{row->
+            if(row.s("type")!="VIEW") return@filter false
+            val config=JSONObject(row.s("config","{}"))
+            config.s("component")=="chart" && config.s("chart")!="list" ||
+                config.optJSONArray("components")?.objects()?.any{it.s("component")=="chart"}==true
+        }
+        return charts.singleOrNull{it.s("title")==name} ?: charts.singleOrNull{it.s("title").contains(name)}
+    }
 
     private fun namedMetrics(title:String,metrics:List<JSONObject>):List<JSONObject> {
         val name = compact(title)

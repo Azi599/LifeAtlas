@@ -18,7 +18,7 @@ import java.time.*
 data class AtlasState(
     val busy:Boolean=false,val status:String="",val theme:String="system",val compact:Boolean=false,val themeConfig:String=ThemeDefaults.config().toString(),val themeId:String="lavender",val objects:List<JSONObject> = emptyList(),val timeline:List<JSONObject> = emptyList(),
     val plugins:List<JSONObject> = emptyList(),val timers:List<JSONObject> = emptyList(),
-    val historyMetric:String="",val historyFrom:String="",val historyTo:String="",val historyOffset:Int=0,val builds:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
+    val historyMetric:String="",val historyFrom:String="",val historyTo:String="",val historyOffset:Int=0,val analysisLayout:List<JSONObject> = emptyList(),val builds:List<JSONObject> = emptyList(),val workflows:List<JSONObject> = emptyList(),
     val pending:JSONObject?=null,val result:JSONObject?=null,val revision:Int=0,val image:String?=null,val imageText:String="",val imageLayout:String="[]",val error:String="",val draft:String=""
 )
 class AtlasModel(app:Application):AndroidViewModel(app) {
@@ -44,7 +44,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         if (draft == input) saveDraft("")
     }
     fun refresh()=viewModelScope.launch(Dispatchers.IO) {load()}
-    private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,timeline=store.timeline(historyMetric,historyFrom,historyTo,historyOffset),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
+    private fun load() {update{it.copy(theme=ThemeRepository(store).appearance().s("mode","system"),compact=ThemeRepository(store).appearance().optInt("compact")==1,themeConfig=ThemeRepository(store).current().s("config"),themeId=ThemeRepository(store).current().s("id"),objects=store.objects(all=true),historyMetric=historyMetric.orEmpty(),historyFrom=historyFrom,historyTo=historyTo,historyOffset=historyOffset,timeline=store.timeline(historyMetric,historyFrom,historyTo,historyOffset),analysisLayout=store.query("SELECT * FROM atlas_layout ORDER BY position,id"),plugins=store.query("SELECT p.* FROM atlas_plugins p JOIN (SELECT plugin_id,MAX(version) version FROM atlas_plugins GROUP BY plugin_id) latest ON p.plugin_id=latest.plugin_id AND p.version=latest.version ORDER BY p.created_at DESC LIMIT 100"),timers=store.query("SELECT * FROM atlas_timers WHERE state!='STOPPED'"),builds=store.query("SELECT * FROM atlas_builds ORDER BY created_at DESC LIMIT 30"),workflows=store.query("SELECT * FROM atlas_workflows"),revision=it.revision+1)} }
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
         commandMutex.withLock {
         update{it.copy(busy=true,status=title,error="")}
