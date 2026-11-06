@@ -31,6 +31,36 @@ class UiTest {
         rule.onNodeWithText("新增记录").assertExists()
         capture("lifeatlas-project.png")
     }
+    @Test fun ambiguousRecordCanChangeMetricBeforeSaving() {
+        val vm = ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        val date = java.time.LocalDate.now().toString()
+        fun create(title: String, unit: String): String {
+            val config = obj("kind" to "ALLOCATION", "unit" to unit, "aggregate" to "SUM")
+            return vm.actions.single("atlas.createObject", obj("type" to "METRIC", "title" to title, "config" to config))
+                .getJSONObject("steps").getJSONObject("result").getString("id")
+        }
+        val wrong = create("舞蹈练习", "小时")
+        val right = create("吉他练习", "分钟")
+        val args = obj("metricId" to wrong, "value" to "0.5", "date" to date)
+        val step = obj("stepId" to "s1", "actionId" to "atlas.record", "args" to args)
+        val plan = obj("title" to "记下半小时练习", "ai" to true, "steps" to JSONArray().put(step))
+        PlanReview.assignMetricChoices(plan, "刚练了半小时", vm.store.objects(all = true))
+        runBlocking { vm.execute(plan, true).join() }
+        org.junit.Assert.assertTrue(vm.store.facts(wrong).isEmpty())
+        org.junit.Assert.assertTrue(vm.ui.value.error.contains("归属"))
+        runBlocking { vm.execute(plan.put("fromChoice", true), true).join() }
+        rule.onNodeWithText("确认执行").performScrollTo().assertIsNotEnabled()
+        rule.onNodeWithText("记到：请选择").performScrollTo().performClick()
+        rule.onNodeWithText("吉他练习").performScrollTo().performClick()
+        rule.onNodeWithText("30 分钟").performScrollTo().assertIsDisplayed()
+        capture("record-metric-review.png")
+        rule.onNodeWithText("确认执行").performScrollTo().assertIsEnabled().performClick()
+        rule.waitUntil(10000) { !vm.ui.value.busy && vm.ui.value.pending == null }
+        rule.onNodeWithTag("command-status").assertIsDisplayed()
+        org.junit.Assert.assertTrue(vm.store.facts(wrong).isEmpty())
+        org.junit.Assert.assertEquals(0, vm.store.facts(right).single().s("value").toBigDecimal().compareTo(30.toBigDecimal()))
+    }
+
     @Test fun themeEditorPreviewAndRestartRender() {
         var vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
         if(vm.store.metrics().none{it.s("title")=="浇水量"}) {

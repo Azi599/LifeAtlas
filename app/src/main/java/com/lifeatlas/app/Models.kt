@@ -90,11 +90,50 @@ fun resolvedRecordValue(raw:BigDecimal?,fields:JSONObject,config:JSONObject):Big
     }
     var result=value ?: return null
     (config.optJSONArray("conversions") ?: JSONArray()).objects().filter{it.optInt("version")>unitVersion}.forEach{result*=decimal(it.getString("factor"))}
-    if(fields.s("flow")!="transfer"){if(config.s("role")=="expense")result=if(fields.s("flow")=="refund")result.abs()else result.abs().negate();if(config.s("role")=="income")result=result.abs()}
-    if(config.s("role") in setOf("income","expense","balance","accountChange"))return runCatching{result.setScale(config.optInt("decimalPlaces",2),java.math.RoundingMode.UNNECESSARY)}.getOrNull()
-    return result
+    return runCatching { signedRecordValue(result, fields, config) }.getOrNull()
 }
 fun normalizedValue(raw:BigDecimal,fields:JSONObject,config:JSONObject):BigDecimal=resolvedRecordValue(raw,fields,config) ?: error("计算所需字段缺失或无效")
+
+private fun signedRecordValue(value: BigDecimal, fields: JSONObject, config: JSONObject): BigDecimal {
+    val role = config.s("role")
+    val signed = if (fields.s("flow") == "transfer") value else when (role) {
+        "expense" -> if (fields.s("flow") == "refund") value.abs() else value.abs().negate()
+        "income" -> value.abs()
+        else -> value
+    }
+    if (role !in setOf("income", "expense", "balance", "accountChange")) return signed
+    val places = config.optInt("decimalPlaces", 2)
+    require(places in 0..8)
+    return signed.setScale(places, java.math.RoundingMode.UNNECESSARY)
+}
+
+internal fun recordValue(args: JSONObject, fields: JSONObject, config: JSONObject): BigDecimal? {
+    var value = args.s("value").takeIf { it.isNotBlank() }?.let(::decimal)
+    val unit = config.s("unit")
+    val sourceUnit = args.s("unit")
+    if (value != null && sourceUnit.isNotBlank()) value = Units.convert(value, sourceUnit, unit)
+    val expression = config.optJSONObject("expression")
+    if (expression != null) {
+        val variables = fields.keys().asSequence().mapNotNull { key ->
+            fields.s(key).toBigDecimalOrNull()?.let { key to it }
+        }.toMap()
+        value = Expressions.eval(expression, variables)
+    }
+    value = value?.let { signedRecordValue(it, fields, config) }
+    val start = args.s("startAt")
+    val end = args.s("endAt")
+    if (start.isNotEmpty() || end.isNotEmpty()) {
+        val from = Instant.parse(start)
+        val to = Instant.parse(end)
+        require(config.s("kind") == "ALLOCATION" && to >= from) { "请核对起止时间" }
+        val duration = Units.convert(secondsBetween(from, to), "s", unit)
+        require(value == null || value.compareTo(duration) == 0) { "时长与起止区间不一致" }
+        value = value ?: duration
+    }
+    require(config.s("kind") != "ALLOCATION" || value == null || value >= BigDecimal.ZERO) { "时长不能为负" }
+    return value
+}
+
 fun retainCalculationHistory(before:JSONObject,next:JSONObject,revision:Long,mode:String,hasRecords:Boolean) {
     val rules=JSONArray((before.optJSONArray("historyRules") ?: JSONArray()).toString())
     if(before.optJSONObject("expression")?.toString()!=next.optJSONObject("expression")?.toString() && hasRecords) {

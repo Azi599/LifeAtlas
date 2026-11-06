@@ -122,8 +122,8 @@ class MainActivity:ComponentActivity() {
                 if(state.status.isNotBlank()) Text(state.status,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=if(state.error.isNotBlank())MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(bottom=4.dp).testTag("command-status"))
                 OutlinedTextField(command,vm::saveDraft,modifier=Modifier.fillMaxWidth(),label={Text("输入")},minLines=1,maxLines=3)
                 Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-                    TextButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "换图")}
-                    if(state.image!=null)TextButton(enabled=!state.busy,onClick=vm::clearImage){Text("移除")}
+                    OutlinedButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "换图")}
+                    if(state.image!=null)OutlinedButton(enabled=!state.busy,onClick=vm::clearImage){Text("移除")}
                     Spacer(Modifier.weight(1f))
                     Button(modifier=Modifier.testTag("command-send"),enabled=!state.busy && (command.isNotBlank() || state.imageText.isNotBlank()),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "发送")}
                 }
@@ -135,7 +135,7 @@ class MainActivity:ComponentActivity() {
             if(state.status.isNotBlank() && page!="workspace") item {Text(state.status,style=MaterialTheme.typography.bodyMedium)}
             when(page) {
                 "workspace" -> {
-                    item {ActionRow {TextButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")};TextButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")};TextButton(onClick={create=true}){Text("手动创建")}}}
+                    item {ActionRow {OutlinedButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")};OutlinedButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")};OutlinedButton(onClick={create=true}){Text("手动创建")}}}
                     if(state.imageText.isNotBlank())item {Column {TextButton(onClick={showImageText=!showImageText}){Text(if(showImageText)"收起原文" else "识别原文")};if(showImageText)OutlinedTextField(state.imageText,vm::editImageText,label={Text("图片文字")},modifier=Modifier.fillMaxWidth(),minLines=3)}}
                     state.pending?.let {pending->item {PlanPreview(pending,objects=objects,busy=state.busy,error=state.error,onConfirm={vm.execute(it,true)},onCancel=vm::clearPending)}}
                     state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}

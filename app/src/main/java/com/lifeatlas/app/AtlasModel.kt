@@ -60,6 +60,9 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         if (fromChoice && requiresReview(command)) {
             return@work obj("status" to "PREVIEW", "plan" to command, "message" to "请核对后保存")
         }
+        require(command.optJSONArray("steps")?.objects().orEmpty().none(PlanReview::metricSelectionPending)) {
+            "请选择每笔记录的归属"
+        }
         val result = actions.execute(command, confirmed && !fromChoice)
         if (result.s("status") == "DONE" && command.optBoolean("ai")) {
             if (command.optBoolean("imageImport")) update { it.copy(image = null, imageText = "", imageLayout = "[]") }
@@ -84,7 +87,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     private fun requiresReview(plan: JSONObject): Boolean =
         plan.optBoolean("imageImport") || (plan.optJSONArray("steps") ?: JSONArray()).objects().any { step ->
             val action = step.s("actionId")
-            action in setOf("atlas.editRecord", "atlas.deleteRecord", "atlas.restoreRecord", "atlas.deleteObject") ||
+            PlanReview.metricChoices(step).isNotEmpty() || action in setOf("atlas.editRecord", "atlas.deleteRecord", "atlas.restoreRecord", "atlas.deleteObject") ||
                 (action == "atlas.createObject" && step.optJSONObject("args")?.s("type") == "METRIC")
         }
 
