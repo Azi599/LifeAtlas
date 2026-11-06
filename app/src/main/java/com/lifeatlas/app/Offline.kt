@@ -5,6 +5,8 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.text.Normalizer
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 
 object Offline {
     private data class Vocabulary(val words: List<String>, val kind: String = "", val role: String = "", val unit: String = "")
@@ -35,12 +37,20 @@ object Offline {
     private val startTimer = Regex("^(?:请|帮我)?(?:开始(.+?)计时|给(.+?)开始计时)$")
     private val timerAction = mapOf("暂停计时" to "time.pause","继续计时" to "time.resume","结束计时" to "time.stop","停止计时" to "time.stop")
     private val recordLead = Regex("^(?:请|帮我|给我)?(?:记录一下|记一笔|记一下|记下|记录|补记)")
-    private val dateLead = Regex("^(今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|刚才|刚刚|\\d{4}-\\d{2}-\\d{2})")
+    private val dateWord = "今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|刚才|刚刚|\\d{4}-\\d{2}-\\d{2}"
+    private val dateLead = Regex("^($dateWord)")
+    private val meridiem = "凌晨|早上|上午|中午|下午|傍晚|晚上"
+    private val clockNumber = "[0-9零〇一二两三四五六七八九十]{1,3}"
+    private val clock = Regex("($meridiem)?($clockNumber)(?:[:：]([0-5]\\d)|点(?:(半)|($clockNumber)分)?)")
+    private val intervalClock = "(?:(?:$meridiem)?$clockNumber(?:[:：][0-5]\\d|点(?:半|${clockNumber}分)?))"
+    private val interval = Regex("^(?:从)?($intervalClock)(?:到|至|—|~)(?:($dateWord))?($intervalClock)(.+)$")
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
     private val rangeLead = Regex("^(最近[0-9]{1,2}天|近[0-9]{1,2}天|最近七天|近七天|本月|这个月|上月|上个月|今天|昨天|前天)")
     private val number = "半|[+-]?(?:[0-9]+(?:\\.[0-9]+)?|[零〇一二两三四五六七八九十百千万]+(?:点[零〇一二两三四五六七八九0-9]+)?)"
     private val numericTail = Regex("^(?:[:=]|是|为|了|有)?($number)([^0-9零〇一二两三四五六七八九十百千万点.?？,，;；:：!！+\\-]{0,18})$")
     private val cashTail = Regex("^(?:[:=]|是|为|了)?($number)块([0-9零〇一二两三四五六七八九])(?:钱)?$")
+    private val halfHour = Regex("^(?:[:=]|是|为|了|有)?($number)(?:个)?半(?:小时|钟头)$")
+    private val durationPiece = Regex("($number)(小时|分钟|秒)")
 
     fun plan(input: String, store: AtlasStore): JSONObject? =
         plan(input,store.metrics(),LocalDate.now(),
@@ -170,6 +180,32 @@ object Offline {
         val date = dateLead.find(body)
         val day = date?.value?.let { parseDate(it,today) ?: return null } ?: today
         body = body.drop(date?.value?.length ?: 0).replaceFirst(recordLead,"").trimStart(':',',','，')
+        val dayPart = if(date?.value in setOf("昨晚","今晚")) "晚上" else ""
+        interval.matchEntire(body)?.let { match ->
+            val (fromText,endDayText,toText,title) = match.destructured
+            val startTime = localClock(fromText,dayPart) ?: return null
+            val endTime = localClock(toText,if(endDayText in setOf("昨晚","今晚")) "晚上" else "") ?: return null
+            val endDay = if (endDayText.isNotEmpty()) parseDate(endDayText,today) ?: return null
+                else if (endTime<startTime) day.plusDays(1) else day
+            val zone = ZoneId.systemDefault()
+            val startAt = instant(day,startTime,zone) ?: return null
+            val endAt = instant(endDay,endTime,zone) ?: return null
+            if (endAt<startAt) return null
+            val targets = namedMetrics(title,metrics).filter { metric ->
+                val config = JSONObject(metric.s("config"))
+                config.s("kind")=="ALLOCATION" && acceptsScalar(config)
+            }
+            return choose(input,"记到哪个指标？",targets.map { metric ->
+                metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),
+                    "date" to day.toString(),"zone" to zone.id,"startAt" to startAt.toString(),"endAt" to endAt.toString()))
+            })
+        }
+        val startClock = clock.find(body)?.takeIf { it.range.first==0 }
+        val occurredAt = startClock?.let {
+            val time = localClock(it.value,dayPart) ?: return null
+            instant(day,time,ZoneId.systemDefault()) ?: return null
+        }
+        if (startClock!=null) body = body.drop(startClock.value.length)
         val exact = metrics.mapNotNull { metric ->
             val title = compact(metric.s("title"))
             if (title.isEmpty() || !body.startsWith(title)) return@mapNotNull null
@@ -187,10 +223,9 @@ object Offline {
             val unit = config.s("unit")
             if (q.unit.isNotBlank() && runCatching { Units.convert(q.value,q.unit,unit) }.isFailure) return@mapNotNull null
             if (config.s("kind")=="ALLOCATION" && q.value.signum()<0) return@mapNotNull null
-            val fields = config.optJSONArray("fields")
-            if (config.has("expression") || fields?.objects()?.any { it.optBoolean("required") }==true) return@mapNotNull null
+            if (!acceptsScalar(config)) return@mapNotNull null
             metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),"value" to q.value.toPlainString(),
-                "unit" to q.unit.ifBlank{unit},"date" to day.toString()))
+                "unit" to q.unit.ifBlank{unit},"date" to day.toString(),"occurredAt" to occurredAt?.toString()))
         }
         return choose(input,"记到哪个指标？",options)
     }
@@ -227,8 +262,49 @@ object Offline {
             (Units.dimension(words.unit)!=null && Units.dimension(unit)==Units.dimension(words.unit))
     }
 
+    private fun acceptsScalar(config:JSONObject):Boolean =
+        !config.has("expression") && config.optJSONArray("fields")?.objects()?.none{it.optBoolean("required")}!=false
+
+    private fun localClock(text:String,defaultPart:String):LocalTime? {
+        val match = clock.matchEntire(text) ?: return null
+        val (specifiedPart,hourText,colonMinutes,half,spokenMinutes) = match.destructured
+        val part = specifiedPart.ifBlank{defaultPart}
+        return runCatching {
+            var hour = InputEvidence.number(hourText)?.intValueExact() ?: return null
+            if (part in setOf("下午","傍晚","晚上") && hour in 1..11) hour += 12
+            if (part=="凌晨" && hour==12) hour = 0
+            val minute = when {
+                half.isNotBlank() -> 30
+                colonMinutes.isNotBlank() -> colonMinutes.toInt()
+                spokenMinutes.isNotBlank() -> InputEvidence.number(spokenMinutes)?.intValueExact() ?: return null
+                else -> 0
+            }
+            LocalTime.of(hour,minute)
+        }.getOrNull()
+    }
+
+    private fun instant(date:LocalDate,time:LocalTime,zone:ZoneId):java.time.Instant? {
+        val local = date.atTime(time)
+        return zone.rules.getValidOffsets(local).singleOrNull()?.let(local::toInstant)
+    }
+
     private fun parseQuantity(text:String):Quantity? {
         val body=text.removeSuffix("整")
+        halfHour.matchEntire(body)?.let {
+            val value = InputEvidence.number(it.groupValues[1]) ?: return null
+            if(value.signum()<0) return null
+            return Quantity(value+BigDecimal("0.5"),"小时")
+        }
+        val duration = body.trimStart(':','=').removePrefix("是").removePrefix("为").removePrefix("了")
+        val pieces = durationPiece.findAll(duration).toList()
+        if (pieces.size in 2..3 && pieces.joinToString(""){it.value}==duration && pieces.map{it.groupValues[2]}.distinct().size==pieces.size) {
+            val seconds = pieces.map {
+                val value = if(it.groupValues[1]=="半") BigDecimal("0.5") else InputEvidence.number(it.groupValues[1]) ?: return null
+                if(value.signum()<0) return null
+                Units.convert(value,it.groupValues[2],"秒")
+            }
+            return Quantity(MathEngine.sum(seconds),"秒")
+        }
         cashTail.matchEntire(body)?.let {
             val whole = InputEvidence.number(it.groupValues[1]) ?: return null
             val fraction = InputEvidence.number(it.groupValues[2])?.movePointLeft(1) ?: return null

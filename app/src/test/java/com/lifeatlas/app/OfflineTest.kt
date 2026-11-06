@@ -91,4 +91,20 @@ class OfflineTest {
         assertNull(OfflineReceipt.plan(source.replace("午餐","退款"),"",listOf(meals)))
         assertNull(OfflineReceipt.plan(source.replace("2026-11-04",""),"",listOf(meals)))
     }
+    @Test fun localClockRecordsExactTimeAndCrossMidnightInterval() {
+        val zone = java.time.ZoneId.systemDefault()
+        val timed = args(Offline.plan("昨天16:20学习一个半小时",listOf(study),today)!!)
+        val occurred = java.time.Instant.parse(timed.s("occurredAt")).atZone(zone)
+        assertEquals("2026-11-05T16:20",occurred.toLocalDateTime().toString())
+        assertEquals("1.5",timed.s("value"))
+        val overnight = args(Offline.plan("昨天23:40到今天00:20睡眠",listOf(study,sleep),today)!!)
+        assertEquals("sleep",overnight.s("metricId"))
+        val from=java.time.Instant.parse(overnight.s("startAt"))
+        val to=java.time.Instant.parse(overnight.s("endAt"))
+        assertEquals(40L,java.time.Duration.between(from,to).toMinutes())
+        assertEquals("2026-11-05",overnight.s("date"))
+        val mixed = args(Offline.plan("学习1小时30分钟",listOf(study),today)!!)
+        assertEquals("5400",mixed.s("value"))
+        assertEquals("秒",mixed.s("unit"))
+    }
 }
