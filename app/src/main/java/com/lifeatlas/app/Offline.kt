@@ -9,25 +9,28 @@ import java.time.LocalTime
 import java.time.ZoneId
 
 object Offline {
-    private data class Vocabulary(val words: List<String>, val kind: String = "", val role: String = "", val unit: String = "", val titles: Set<String> = emptySet())
+    private data class Vocabulary(val words: List<String>, val kind: String = "", val role: String = "", val unit: String = "", val titles: Set<String> = emptySet(),
+        val defaultTitle: String = "", val defaultUnit: String = "", val defaultKind: String = "CHANGE")
     private data class Quantity(val value: BigDecimal, val unit: String)
     private data class Match(val metric: JSONObject, val quantity: Quantity)
 
     private val vocabulary = listOf(
-        Vocabulary(listOf("学习时长","学习时间","学习","学了","自习","复习"),kind="ALLOCATION"),
-        Vocabulary(listOf("背单词时间","背单词时长","背单词","记单词"),kind="ALLOCATION"),
-        Vocabulary(listOf("睡眠时长","睡觉时间","睡眠","睡了","睡觉"),kind="ALLOCATION"),
-        Vocabulary(listOf("阅读时长","阅读时间","阅读","看书","读书"),kind="ALLOCATION"),
-        Vocabulary(listOf("阅读页数","看书页数","阅读","看书","读了","看了"),unit="页"),
-        Vocabulary(listOf("运动时长","运动时间","运动","锻炼","练了"),kind="ALLOCATION"),
-        Vocabulary(listOf("跑步时长","跑步时间","跑步","跑了"),kind="ALLOCATION"),
-        Vocabulary(listOf("饮水量","喝水量","饮水","喝水","喝了"),unit="毫升"),
-        Vocabulary(listOf("喝水杯数","饮水杯数","饮水","喝水","喝了"),unit="杯"),
-        Vocabulary(listOf("晨间体重","体重","称重","称了","早上量的体重","量的体重"),unit="kg"),
+        Vocabulary(listOf("学习时长","学习时间","学习","学了","自习","复习"),kind="ALLOCATION",defaultTitle="学习时间",defaultUnit="分钟"),
+        Vocabulary(listOf("背单词时间","背单词时长","背单词","记单词"),kind="ALLOCATION",defaultTitle="背单词时间",defaultUnit="分钟"),
+        Vocabulary(listOf("睡眠时长","睡觉时间","睡眠","睡了","睡觉"),kind="ALLOCATION",defaultTitle="睡眠时长",defaultUnit="小时"),
+        Vocabulary(listOf("阅读时长","阅读时间","阅读","看书","读书"),kind="ALLOCATION",defaultTitle="阅读时间",defaultUnit="分钟"),
+        Vocabulary(listOf("阅读页数","看书页数","阅读","看书","读了","看了"),unit="页",defaultTitle="阅读页数",defaultUnit="页"),
+        Vocabulary(listOf("运动时长","运动时间","运动","锻炼","练了"),kind="ALLOCATION",defaultTitle="运动时长",defaultUnit="分钟"),
+        Vocabulary(listOf("跑步时长","跑步时间","跑步","跑了"),kind="ALLOCATION",defaultTitle="跑步时长",defaultUnit="分钟"),
+        Vocabulary(listOf("饮水量","喝水量","饮水","喝水","喝了"),unit="毫升",defaultTitle="饮水量",defaultUnit="毫升"),
+        Vocabulary(listOf("喝水杯数","饮水杯数","饮水","喝水","喝了"),unit="杯",defaultTitle="饮水杯数",defaultUnit="杯"),
+        Vocabulary(listOf("晨间体重","体重","称重","称了","早上量的体重","量的体重"),unit="kg",
+            defaultTitle="体重",defaultUnit="kg",defaultKind="SNAPSHOT"),
         Vocabulary(listOf("中午饭","午饭花了","午餐花了","晚餐花了","晚饭花了","早餐花了","午饭","午餐","晚饭","早餐","饮料","餐饮"),role="expense",
-            titles=setOf("餐饮","餐饮支出","伙食费","餐费")),
-        Vocabulary(listOf("交通费","交通支出","打车费"),role="expense",titles=setOf("交通支出","交通费")),
-        Vocabulary(listOf("步数","走了","步行步数"),unit="步"),
+            titles=setOf("餐饮","餐饮支出","伙食费","餐费"),defaultTitle="餐饮支出",defaultUnit="元"),
+        Vocabulary(listOf("交通费","交通支出","打车费"),role="expense",titles=setOf("交通支出","交通费"),defaultTitle="交通支出",defaultUnit="元"),
+        Vocabulary(listOf("步数","走了","步行步数"),unit="步",defaultTitle="步数",defaultUnit="步",defaultKind="SNAPSHOT"),
+        Vocabulary(listOf("兼职挣了","兼职赚了","兼职收入"),role="income",titles=setOf("兼职收入"),defaultTitle="兼职收入",defaultUnit="元"),
         Vocabulary(listOf("花了","消费了","支出了","消费","支出"),role="expense"),
         Vocabulary(listOf("收入","进账","赚了","收到了","兼职挣了","兼职赚了","挣了"),role="income")
     )
@@ -389,18 +392,34 @@ object Offline {
         val actions = request.split(Regex("[,，;；、]")).map(String::trim)
         if (actions.size in 2..6 && actions.none { it.isBlank() }) {
             val sharedDate = dateLead.find(actions.first().replaceFirst(recordLead,""))?.value
-            val steps = actions.mapIndexed { index, part ->
+            val steps=JSONArray()
+            val available=metrics.toMutableList()
+            val generated=mutableMapOf<String,String>()
+            actions.forEachIndexed { index, part ->
                 val phrase = part.replaceFirst(Regex("^(?:另外|还|再告诉我|再(?=列出|查看)|顺便(?=查|统计))"),"").trim()
                 val evening = phrase.startsWith("晚上又")
                 val body = if(evening) phrase.removePrefix("晚上又") else phrase
                 val addedDate = if (index>0 && sharedDate!=null && (evening || part.startsWith("另外") || part.startsWith("还")) &&
                     dateLead.find(body.replaceFirst(recordLead,""))==null) sharedDate else ""
-                val subplan = plan(addedDate+body,metrics,today) ?: return null
-                val step = subplan.optJSONArray("steps")?.objects()?.singleOrNull() ?: return null
-                if (subplan.optBoolean("review") || step.s("actionId") !in setOf("atlas.record","atlas.createObject","atlas.query","finance.cashflow")) return null
-                step.put("stepId","s${index+1}")
+                val subplan=plan(addedDate+body,available,today) ?: return null
+                val substeps=subplan.optJSONArray("steps")?.objects() ?: return null
+                if(subplan.optBoolean("review") || substeps.any{
+                    it.s("actionId") !in setOf("atlas.record","atlas.createObject","atlas.query","finance.cashflow")
+                }) return null
+                val prefix="part${index+1}_"
+                substeps.forEach { step ->
+                    val id=prefix+step.s("stepId")
+                    val args=step.getJSONObject("args")
+                    steps.put(step.copyJson().put("stepId",id).put("args",bindCompound(args,prefix,generated)))
+                    if(step.s("actionId")=="atlas.createObject" && args.s("type")=="METRIC") {
+                        val temporary=uid()
+                        generated[temporary]="$id.id"
+                        available.add(obj("id" to temporary,"title" to args.s("title"),"config" to args.getJSONObject("config").toString()))
+                    }
+                }
             }
-            return command(input,"atlas.record",JSONObject()).put("steps",JSONArray(steps))
+            if(steps.length() !in 1..60) return null
+            return command(input,"atlas.record",JSONObject()).put("steps",steps)
         }
         val named = createNamed.matchEntire(request)
         val typed = createTyped.matchEntire(request)
@@ -507,11 +526,7 @@ object Offline {
             else vocabulary.flatMap { words ->
                 val word = words.words.filter { body.startsWith(it) }.maxByOrNull { it.length } ?: return@flatMap emptyList()
                 val q = parseQuantity(body.drop(word.length)) ?: return@flatMap emptyList()
-                val targets = metrics.filter { matches(it,words) }.ifEmpty {
-                    if (words.role.isNotBlank() && words.titles.isNotEmpty()) {
-                        metrics.filter { JSONObject(it.s("config")).s("role")==words.role }.takeIf { it.size==1 }.orEmpty()
-                    } else emptyList()
-                }
+                val targets = metrics.filter { matches(it,words) }
                 targets.map { Match(it,q) }
             }.distinctBy { it.metric.s("id") }
         val options = found.mapNotNull { (metric,q) ->
@@ -523,7 +538,39 @@ object Offline {
             metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),"value" to q.value.toPlainString(),
                 "unit" to q.unit.ifBlank{unit},"date" to day.toString(),"occurredAt" to occurredAt?.toString()))
         }
-        return choose(input,"记到哪个指标？",options)
+        return choose(input,"记到哪个指标？",options) ?: if(found.isEmpty()) {
+            firstRecord(input,body,day,occurredAt,metrics)
+        } else null
+    }
+
+    private fun firstRecord(input:String,body:String,day:LocalDate,occurredAt:java.time.Instant?,metrics:List<JSONObject>):JSONObject? {
+        val match=vocabulary.mapNotNull{words->
+            if(words.defaultTitle.isBlank()) return@mapNotNull null
+            val lead=words.words.filter(body::startsWith).maxByOrNull{it.length} ?: return@mapNotNull null
+            val quantity=parseQuantity(body.drop(lead.length)) ?: return@mapNotNull null
+            if(quantity.unit.isBlank() || runCatching{Units.convert(quantity.value,quantity.unit,words.defaultUnit)}.isFailure) return@mapNotNull null
+            if(words.kind=="ALLOCATION" && quantity.value.signum()<0) return@mapNotNull null
+            if(metrics.any{matches(it,words) || it.s("title")==words.defaultTitle}) return@mapNotNull null
+            words to quantity
+        }.singleOrNull() ?: return null
+        val (words,quantity)=match
+        val kind=words.kind.ifBlank{words.defaultKind}
+        val plan=command(input,"atlas.createObject",obj("type" to "METRIC","title" to words.defaultTitle,"reuseMetric" to true,
+            "config" to obj("kind" to kind,"unit" to words.defaultUnit,"role" to words.role,
+                "aggregate" to if(kind=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")))
+        plan.getJSONArray("steps").put(obj("stepId" to "s2","actionId" to "atlas.record","args" to obj(
+            "metricId" to obj("\$ref" to "s1.id"),"value" to quantity.value.toPlainString(),"unit" to quantity.unit,
+            "date" to day.toString(),"occurredAt" to occurredAt?.toString())))
+        return plan
+    }
+
+    private fun bindCompound(value:Any,prefix:String,generated:Map<String,String>):Any = when(value) {
+        is JSONObject -> if(value.has("\$ref")) obj("\$ref" to (prefix+value.s("\$ref"))) else JSONObject().apply{
+            value.keys().forEach{key->put(key,bindCompound(value.get(key),prefix,generated))}
+        }
+        is JSONArray -> JSONArray().apply{for(index in 0 until value.length()) put(bindCompound(value.get(index),prefix,generated))}
+        is String -> generated[value]?.let{obj("\$ref" to it)} ?: value
+        else -> value
     }
 
     private fun choose(input:String,question:String,options:List<Pair<JSONObject,JSONObject>>):JSONObject? {
