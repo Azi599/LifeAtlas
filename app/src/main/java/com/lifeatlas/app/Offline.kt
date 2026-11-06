@@ -36,6 +36,11 @@ object Offline {
         Vocabulary(listOf("花了","消费了","支出了","消费","支出"),role="expense"),
         Vocabulary(listOf("收入","进账","赚了","收到了","兼职挣了","兼职赚了","挣了"),role="income")
     )
+    private val compoundActions=setOf(
+        "atlas.record","atlas.createEvent","atlas.createObject","atlas.query","atlas.aggregate","atlas.chart",
+        "atlas.correlation","finance.cashflow","finance.spendingShare","finance.dailySpending","time.occupied"
+    )
+    private val quoteClosers=setOf('”','」','』','"','’')
     private val pages = mapOf(
         "输入" to "workspace","首页" to "workspace","主页" to "workspace",
         "时间轴" to "history","记录" to "history","记录流" to "history","历史记录" to "history",
@@ -428,6 +433,7 @@ object Offline {
             val result=plan(action,contained,today,records,timers,spaces) ?: return null
             if(result.optJSONArray("steps")?.objects()?.any{it.s("actionId")=="atlas.createObject"}==true)
                 return question(input,"请指定这个范围内已有的指标")
+            result.optJSONArray("options")?.objects()?.forEach{option->option.optJSONObject("plan")?.put("rawInput",input)}
             return result.put("title",input).put("rawInput",input)
         }
         renameFolder.matchEntire(request)?.let { match ->
@@ -532,16 +538,14 @@ object Offline {
             val available=metrics.toMutableList()
             val generated=mutableMapOf<String,String>()
             actions.forEachIndexed { index, part ->
-                val phrase = part.replaceFirst(Regex("^(?:另外|还|再告诉我|再(?=列出|查看)|顺便(?=查|统计))"),"").trim()
+                val phrase = part.replaceFirst(Regex("^(?:另外|还|再告诉我|(?:接着|然后|最后|再|顺便)(?=查|列出|看|统计|汇总|记录|记|画|生成))"),"").trim()
                 val evening = phrase.startsWith("晚上又")
                 val body = if(evening) phrase.removePrefix("晚上又") else phrase
                 val addedDate = if (index>0 && sharedDate!=null && (evening || part.startsWith("另外") || part.startsWith("还")) &&
                     dateLead.find(body.replaceFirst(recordLead,""))==null) sharedDate else ""
                 val subplan=plan(addedDate+body,available,today) ?: return null
                 val substeps=subplan.optJSONArray("steps")?.objects() ?: return null
-                if(subplan.optBoolean("review") || substeps.any{
-                    it.s("actionId") !in setOf("atlas.record","atlas.createObject","atlas.query","finance.cashflow")
-                }) return null
+                if(subplan.optBoolean("review") || substeps.any{it.s("actionId") !in compoundActions}) return null
                 val prefix="part${index+1}_"
                 substeps.forEach { step ->
                     val id=prefix+step.s("stepId")
@@ -867,9 +871,10 @@ object Offline {
             return Quantity(MathEngine.sum(seconds),"秒")
         }
         cashTail.matchEntire(body)?.let {
-            val whole = InputEvidence.number(it.groupValues[1]) ?: return null
+            val major=it.groupValues[1]
+            val whole = InputEvidence.number(major) ?: return null
             val fraction = InputEvidence.number(it.groupValues[2])?.movePointLeft(1) ?: return null
-            return Quantity(if(whole.signum()<0) whole-fraction else whole+fraction,"元")
+            return Quantity(if(whole.signum()<0 || major.startsWith("-")) whole-fraction else whole+fraction,"元")
         }
         namedCash.matchEntire(body)?.let { match ->
             val (major,tenths,hundredths)=match.destructured
@@ -901,7 +906,7 @@ object Offline {
         text.forEachIndexed{index,ch->
             val end=closing.lastOrNull()
             if(ch==end) closing.removeLast()
-            else if(end !in setOf('”','」','』','"','’')) {
+            else if(end !in quoteClosers) {
                 val match=when(ch){'“'->'”';'「'->'」';'『'->'』';'"'->'"';'‘'->'’';'('->')';'（'->'）';'['->']';'【'->'】';else->null}
                 if(match!=null) closing.addLast(match)
                 else if(end==null && ch in separators){parts.add(text.substring(start,index));start=index+1}
