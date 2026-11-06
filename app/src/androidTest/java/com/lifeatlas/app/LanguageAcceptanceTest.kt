@@ -126,10 +126,11 @@ class LanguageAcceptanceTest {
             scenario("edit-history", "把昨天的晨间体重从65.2更正为64.9公斤，只改那一条。") {
                 assertNotNull("更正应先给核对", model.ui.value.pending)
                 record(weight, yesterday, "65.2")
+                val currentRows = model.store.facts(weight, today.toString(), today.toString()).map { it.toString() }
                 show("65.2 → 64.9", substring = true)
                 confirmIfNeeded()
                 assertTrue(record(weight, yesterday, "64.9").optLong("revision") > 1)
-                record(weight, today, "65")
+                assertEquals(currentRows, model.store.facts(weight, today.toString(), today.toString()).map { it.toString() })
                 assertEquals(1, model.store.facts(weight, yesterday.toString(), yesterday.toString()).size)
             }
             scenario("midnight", "昨天晚上23点40分睡着，今天零点20分起来，记一下这次睡眠。") { evidence ->
