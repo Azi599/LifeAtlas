@@ -43,6 +43,9 @@ object Offline {
     private val createTyped = Regex("^(?:请|帮我)?(?:新建|创建)(?:一个|个)?(项目|目录|文件夹)[:：]?(.{1,80})$")
     private val createAfterType = Regex("^(?:请|帮我)?(?:新建|创建)(?:一个|个)?(项目|目录|文件夹)[,，]?(?:叫|名为)(.{1,80})$")
     private val createInside = Regex("^在(.+?)(?:下面|目录下|里|下)(?:再)?(?:新建|创建|建)(项目|目录|文件夹)?(.+)$")
+    private val addMetric = Regex("^(?:给|在)(.+?)(?:里)?(?:添加|增加|加|新建)(?:一个|个)?([“「\"][^”」\"]+[”」\"])指标(?:[,，]单位(?:是|为)?([^,，]+))?(?:[,，](.+))?$")
+    private val metricBounds=Regex("^范围([+-]?[0-9]+(?:[.][0-9]+)?)(?:到|至|~)([+-]?[0-9]+(?:[.][0-9]+)?)(?:[,，](允许小数|只能填整数))?$")
+    private val metricPrecision=Regex("^(?:保留|最多)([0-8零一二两三四五六七八])位小数$")
     private val quotedTitle = Regex("[“「\"]([^”」\"]+)[”」\"]")
     private val renameFolder = Regex("^把(.+?)目录改名(?:成|为)(.+)$")
     private val moveFolder = Regex("^把(.+?)目录移动到(.+?)(?:根)?目录(?:[,，]别复制一份)?$")
@@ -290,6 +293,29 @@ object Offline {
         createAfterType.matchEntire(request)?.let { match ->
             val (type,title) = match.destructured
             return command(input,"atlas.createObject",obj("type" to if(type=="项目") "PROJECT" else "FOLDER","title" to unquote(title)))
+        }
+        addMetric.matchEntire(compact(request))?.let { match ->
+            val (parentName,title,unit,rule)=match.destructured
+            val parent=findSpace(parentName,spaces()) ?: return question(input,"请选择要添加指标的目录或项目")
+            val config=obj("kind" to "SNAPSHOT","unit" to unit,"aggregate" to "LAST_SNAPSHOT")
+            when {
+                rule.isBlank() || rule=="允许小数" -> Unit
+                rule=="只能填非负整数" -> config.put("minimum","0").put("decimalPlaces",0)
+                rule=="只能填整数" -> config.put("decimalPlaces",0)
+                metricBounds.matches(rule) -> {
+                    val (minimum,maximum,format)=metricBounds.matchEntire(rule)!!.destructured
+                    if(minimum.toBigDecimal()>maximum.toBigDecimal()) return question(input,"最小值不能大于最大值")
+                    config.put("minimum",minimum).put("maximum",maximum)
+                    if(format=="只能填整数") config.put("decimalPlaces",0)
+                }
+                metricPrecision.matches(rule) -> {
+                    val places=InputEvidence.number(metricPrecision.matchEntire(rule)!!.groupValues[1])?.toInt() ?: return null
+                    config.put("decimalPlaces",places)
+                }
+                else -> return null
+            }
+            return command(input,"atlas.createObject",obj("type" to "METRIC","title" to unquote(title),
+                "parentId" to parent.s("id"),"config" to config,"reuseMetric" to true))
         }
         createInside.matchEntire(request)?.let { match ->
             val (parentName,type,tail) = match.destructured
