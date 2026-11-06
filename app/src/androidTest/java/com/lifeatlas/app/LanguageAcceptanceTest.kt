@@ -93,6 +93,17 @@ class LanguageAcceptanceTest {
                 show("${learned.s("value")} 分钟")
                 capture("mixed-receipt")
                 go("记录")
+                if (rule.onAllNodesWithText("显示：时间轴").fetchSemanticsNodes().isNotEmpty()) {
+                    rule.onNodeWithText("显示：时间轴").performScrollTo().performClick()
+                    rule.onNode(hasText("记录") and hasAnyAncestor(isDialog())).performClick()
+                }
+                if (yesterday.month != today.month) {
+                    val before = model.ui.value
+                    rule.onNodeWithText("开始日期").performScrollTo().performTextReplacement(yesterday.toString())
+                    hideKeyboard()
+                    rule.onNodeWithText("查询").performScrollTo().performClick()
+                    waitForWork(before)
+                }
                 show("-18.50 · $yesterday")
                 show("${learned.s("value")} · $yesterday")
                 capture("mixed-history")
@@ -151,7 +162,9 @@ class LanguageAcceptanceTest {
                 show("打开两日支出核对")
                 rule.onNodeWithText("打开两日支出核对").performClick()
                 record(expense, today, "-6.00")
-                show((previousTotal - java.math.BigDecimal("6.00")).toPlainString(), substring = true)
+                val expected = (previousTotal - java.math.BigDecimal("6.00")).stripTrailingZeros().toPlainString()
+                rule.waitUntil(10000) { rule.onAllNodesWithText("$expected 元").fetchSemanticsNodes().isNotEmpty() }
+                show("$expected 元")
             }
             scenario("new-feature", "做个城市观鸟功能，记录鸟名、看到的只数、有没有听到叫声。我要录入入口、历史记录和趋势图。") {
                 val draft = model.ui.value.pending ?: error("新功能应先给预览")
@@ -294,6 +307,7 @@ class LanguageAcceptanceTest {
             evidence.put("modelTargetCorrect", steps.keys().asSequence().any { steps.optJSONObject(it)?.s("metricId") == metricId })
             return
         }
+        check(!pending.has("question")) { pending.s("question") }
         val steps = pending.getJSONArray("steps").objects()
         val candidates = steps.withIndex().filter { (_, step) ->
             step.s("actionId") == "atlas.record" &&
