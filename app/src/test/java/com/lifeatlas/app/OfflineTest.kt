@@ -64,6 +64,18 @@ class OfflineTest {
         assertEquals("2026-11-06",args(plan).s("to"))
     }
 
+    @Test fun timeZoneConversionKeepsTheOriginalDateAndAsksForMissingContent() {
+        val plan=Offline.plan("现在是东京时间9月18日00:20，记录刚刚发生的事，在北京时间算哪一天？",emptyList(),today)!!
+        assertTrue(plan.s("question").contains("2026-09-17"))
+        assertFalse(plan.has("steps"))
+        val saved=Offline.followUp("内容是：夜间观察结束",plan)!!
+        assertEquals("2026-09-18",args(saved).s("date"))
+        assertEquals("Asia/Tokyo",args(saved).s("zone"))
+        assertEquals("2026-09-17T15:20:00Z",args(saved).s("occurredAt"))
+        assertEquals("夜间观察结束",args(saved).s("text"))
+        assertNull(Offline.followUp("查看时间轴",plan))
+    }
+
     @Test fun unsupportedOrUnclearRequestsCannotTurnIntoRecords() {
         assertNull(Offline.plan("昨天学习时间两公斤",listOf(study),today))
         assertNull(Offline.plan("学习时间两个小时吗？",listOf(study),today))

@@ -20,7 +20,7 @@ class Actions(val store:AtlasStore) {
         "atlas.installBuild" to "验证并安装构建结果 args id；由 Android 系统确认安装",
         "atlas.checkForUpdate" to "查询更新源 args feed?",
         "atlas.installUpdate" to "验证并安装更新 args feed?",
-        "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?(income/expense/balance/accountChange/sleep),minimum?,maximum?,decimalPlaces?,fields:[{id,title,type,required,options?}],expression?}",
+        "atlas.createObject" to "创建工作空间、目录、项目、指标、仪表盘、页面；args type,title,parentId?,config?。指标 config={kind,unit,aggregate,aliases?:[常用说法],role?(income/expense/balance/accountChange/sleep),minimum?,maximum?,decimalPlaces?,fields:[{id,title,type,required,options?}],expression?}",
         "atlas.updateObject" to "修改或移动对象 args id,title?,parentId?,config?,historyMode?(recalculate/preserve),archived?；指标语义不得改变",
         "atlas.relate" to "关联对象 args fromId,toId,kind",
         "atlas.createEvent" to "创建纯文字事件 args text；结果 id 可供多条 record 的 eventId 引用",

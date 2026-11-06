@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 private val manifestKeys=setOf("id","title","version","hostVersion","tier","requires","views","screens","actions","workflows")
 private val metricKeys=setOf("key","title","kind","unit","role","aggregate","dailyAggregate","minimum","maximum",
-    "decimalPlaces","fields","expression","weightField","migrationFactor")
+    "decimalPlaces","fields","expression","weightField","migrationFactor","aliases")
 private val fieldKeys=setOf("id","title","type","required","options","minimum","maximum")
 
 internal fun portablePluginTemplate(manifest:JSONObject):JSONObject {

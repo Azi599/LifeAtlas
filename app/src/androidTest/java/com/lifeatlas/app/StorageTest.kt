@@ -339,6 +339,27 @@ class StorageTest {
         }
         assertEquals("7",db.facts(metric).single().s("value"))
     }
+    @Test fun scopedAliasWritesToOnlyOneProjectAndSurvivesReopen() {
+        fun project(title:String):String = actions.single("atlas.createObject",obj("type" to "PROJECT","title" to title))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        fun metric(parent:String):String = actions.single("atlas.createObject",obj("type" to "METRIC",
+            "title" to "样带长度","parentId" to parent,
+            "config" to obj("kind" to "SNAPSHOT","unit" to "厘米","aliases" to JSONArray().put("实测跨度"))))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val a=metric(project("西岸采样"))
+        val b=metric(project("东岸采样"))
+        val text="请在「东岸采样」里记录昨日实测跨度0.25米"
+        actions.execute(Offline.plan(text,db)!!)
+        assertTrue(db.facts(a).isEmpty())
+        assertEquals(0,db.facts(b).single().s("value").toBigDecimal().compareTo("25".toBigDecimal()))
+        db.close()
+        db=AtlasStore(context,"tests.db")
+        actions=Actions(db)
+        val second=Offline.plan("在「西岸采样」里记今天实测跨度180毫米",db)!!
+        actions.execute(second)
+        assertEquals("18",db.facts(a).single().s("value"))
+        assertEquals(0,db.facts(b).single().s("value").toBigDecimal().compareTo("25".toBigDecimal()))
+    }
     @Test fun naturalLanguageAccountTransferAndProjectionUseMeasuredAnchor(){
         fun create(title:String,role:String,unit:String):String = actions.single("atlas.createObject",obj(
             "type" to "METRIC","title" to title,

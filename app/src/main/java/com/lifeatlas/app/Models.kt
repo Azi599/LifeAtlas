@@ -25,6 +25,14 @@ fun validateMetric(config:JSONObject) {
     val method=config.s("aggregate",if(config.s("kind")=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")
     require(method in aggregateMethods) { "不支持的统计规则：$method" }
     require(config.s("unit").length<=30) { "单位过长" }
+    if(!config.isNull("aliases")) {
+        val aliases=config.optJSONArray("aliases") ?: error("指标别名需要列表")
+        require(aliases.length()<=16){"指标别名最多 16 个"}
+        require((0 until aliases.length()).all{index->
+            val alias=aliases.get(index)
+            alias is String && alias.isNotBlank() && alias.length<=64
+        }){"请核对指标别名"}
+    }
     val minimum=config.s("minimum").takeIf{it.isNotBlank()}?.let(::decimal)
     val maximum=config.s("maximum").takeIf{it.isNotBlank()}?.let(::decimal)
     require(minimum==null || maximum==null || minimum<=maximum) {"最小值不能大于最大值"}
@@ -184,7 +192,10 @@ object Units {
         "kg" to ("mass" to "1000"),"千克" to ("mass" to "1000"),"公斤" to ("mass" to "1000"),"斤" to ("mass" to "500"),"g" to ("mass" to "1"),"克" to ("mass" to "1"),"mg" to ("mass" to "0.001"),
         "L" to ("volume" to "1000"),"升" to ("volume" to "1000"),"ml" to ("volume" to "1"),"毫升" to ("volume" to "1"),
         "h" to ("time" to "3600"),"小时" to ("time" to "3600"),"min" to ("time" to "60"),"分钟" to ("time" to "60"),"d" to ("time" to "86400"),"天" to ("time" to "86400"),"s" to ("time" to "1"),"秒" to ("time" to "1"),
-        "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"块" to ("CNY" to "1"),"块钱" to ("CNY" to "1"),"分" to ("CNY" to "0.01")
+        "CNY" to ("CNY" to "1"),"元" to ("CNY" to "1"),"人民币" to ("CNY" to "1"),"块" to ("CNY" to "1"),"块钱" to ("CNY" to "1"),"分" to ("CNY" to "0.01"),
+        "℃" to ("celsius" to "1"),"°C" to ("celsius" to "1"),"摄氏度" to ("celsius" to "1"),
+        "mm" to ("length" to "1"),"毫米" to ("length" to "1"),"cm" to ("length" to "10"),"厘米" to ("length" to "10"),
+        "m" to ("length" to "1000"),"米" to ("length" to "1000"),"km" to ("length" to "1000000"),"公里" to ("length" to "1000000")
     )
     fun convert(value:BigDecimal,from:String,to:String):BigDecimal {if(from==to) return value;val f=definitions[from] ?: error("未知单位 $from");val t=definitions[to] ?: error("未知单位 $to");require(f.first==t.first){"单位维度不匹配"};val numerator=value.multiply(f.second.toBigDecimal());return try{numerator.divide(t.second.toBigDecimal())}catch(_:ArithmeticException){numerator.divide(t.second.toBigDecimal(),MathContext(24))}}
     fun knownUnits(): Set<String> = definitions.keys

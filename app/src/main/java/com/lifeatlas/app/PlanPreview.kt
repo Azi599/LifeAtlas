@@ -16,6 +16,7 @@ import java.time.LocalDate
     var edited by remember(plan.toString()){mutableStateOf(plan.copyJson())}
     var editing by remember(plan.toString()){mutableStateOf("")}
     var historyMode by rememberSaveable(plan.toString()){mutableStateOf("")}
+    var missingText by rememberSaveable(plan.toString()){mutableStateOf("")}
     var validation by remember{mutableStateOf("")}
     val steps=(edited.optJSONArray("steps") ?: JSONArray()).objects()
     val needsMetricSelection = steps.any(PlanReview::metricSelectionPending)
@@ -25,6 +26,12 @@ import java.time.LocalDate
     Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Text(plan.s("question",plan.s("title","操作预览")),style=MaterialTheme.typography.titleMedium)
         if(plan.has("question")) {
+            if(plan.has("timeDraft")){
+                OutlinedTextField(missingText,{missingText=it},label={Text("发生了什么")},modifier=Modifier.fillMaxWidth(),minLines=2)
+                Button(enabled=!busy && missingText.isNotBlank(),onClick={
+                    Offline.followUp("内容是："+missingText,plan)?.let{onConfirm(it.put("rawInput",plan.s("rawInput")))}
+                }){Text("保存")}
+            }
             (plan.optJSONArray("options") ?: JSONArray()).objects().forEach{choice->
                 OutlinedButton(enabled=!busy,modifier=Modifier.fillMaxWidth(),onClick={onConfirm(choice.getJSONObject("plan").copyJson().put("fromChoice",true))}){Text(choice.s("title"))}
             }
