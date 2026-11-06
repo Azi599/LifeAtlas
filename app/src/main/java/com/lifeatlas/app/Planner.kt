@@ -9,6 +9,7 @@ import java.net.URL
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.DateTimeException
+import java.util.concurrent.TimeUnit
 
 data class AiConfig(val endpoint: String, val key: String, val model: String)
 
@@ -25,7 +26,9 @@ class Planner(private val actions: Actions) {
         val evidence = if (context.has("imageText")) null else InputEvidence(input, today)
         val prompt = """
             你是 Life Atlas 的操作规划器。今天 $today，时区 ${ZoneId.systemDefault().id}。
-            只返回一个完整 JSON 对象。宿主执行操作、换算单位、计算统计。
+            只返回一个完整 JSON 对象，从 steps、question、tools 三种格式中选择一种。
+            参数不确定才用 question；只需要核对保存的计划直接给 steps，宿主负责显示预览。
+            宿主执行操作、换算单位、计算统计。
             从上下文复制已有指标的 id。记一笔数据必须有 atlas.record。创建指标本身不会产生记录。
             指标的活动含义要和原话一致。多个指标单位相同也不代表可互换。
             用户说了几件独立的事就分别列步骤。只做他要求的事，使用现有对象；缺少时才创建最小定义。
@@ -63,10 +66,16 @@ class Planner(private val actions: Actions) {
             .put(obj("role" to "user", "content" to input))
         var repairs = 0
         var validationError = ""
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(150)
         repeat(6) {
-            val response = chat(config, messages)
+            val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+            require(remaining > 0) { "AI 处理时间过长，输入已保留" }
+            val response = chat(config, messages, remaining.coerceAtMost(90_000).toInt())
             try {
                 val proposed = bindings.bindPlan(parsePlanObject(response))
+                require(listOf("steps", "question", "tools").count(proposed::has) == 1) {
+                    "请只返回一个执行计划、一个补充问题或一组查询工具"
+                }
                 if (proposed.has("steps") || proposed.has("question")) {
                     prepare(proposed, input, context, evidence)
                     return proposed
@@ -133,15 +142,15 @@ class Planner(private val actions: Actions) {
         messages.put(obj("role" to "user", "content" to "宿主核对：$reason。请按原始请求重新输出完整 JSON。缺少事实就追问。"))
     }
 
-    fun chat(config: AiConfig, messages: JSONArray): String {
+    fun chat(config: AiConfig, messages: JSONArray, timeoutMs: Int = 90_000): String {
         val url = URL(config.endpoint)
         require(url.protocol == "https") { "API 地址必须使用 HTTPS" }
         val connection = url.openConnection() as HttpURLConnection
         try {
             connection.instanceFollowRedirects = false
             connection.requestMethod = "POST"
-            connection.connectTimeout = 20000
-            connection.readTimeout = 90000
+            connection.connectTimeout = minOf(20_000, timeoutMs)
+            connection.readTimeout = timeoutMs
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Authorization", "Bearer ${config.key}")

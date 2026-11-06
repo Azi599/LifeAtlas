@@ -79,7 +79,7 @@ internal class InputEvidence(input: String, private val today: LocalDate) {
             listOf("occurredAt", "startAt", "endAt").forEach(args::remove)
             return
         }
-        val zone = ZoneId.of(args.s("zone", ZoneId.systemDefault().id))
+        val zone = ZoneId.of(args.s("zone").ifBlank { ZoneId.systemDefault().id })
         if (singleRecord && clocks.size == 2 && config.s("kind") == "ALLOCATION" &&
             (args.has("startAt") || args.has("endAt"))) {
             val first = clocks.first()

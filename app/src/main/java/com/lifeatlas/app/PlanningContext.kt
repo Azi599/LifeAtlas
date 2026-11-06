@@ -2,6 +2,8 @@ package com.lifeatlas.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
 
 /** Short labels let the model address existing objects without inventing database identifiers. */
 internal class PlanningContext(private val original: JSONObject) {
@@ -42,6 +44,16 @@ internal class PlanningContext(private val original: JSONObject) {
         val result = bindFields(args)
         if (action == "atlas.createObject") result.remove("id")
         else if (result.has("id")) result.put("id", bindReference(result.get("id")))
+        if (result.opt("zone") is String && result.s("zone").isBlank()) result.remove("zone")
+        if (action in setOf("atlas.query", "atlas.aggregate", "atlas.report")) {
+            for (key in listOf("from", "to")) {
+                val value = result.s(key)
+                val day = runCatching { OffsetDateTime.parse(value).toLocalDate() }.getOrNull()
+                    ?: runCatching { LocalDateTime.parse(value).toLocalDate() }.getOrNull()
+                if (day != null) result.put(key, day.toString())
+                else if (value.isBlank()) result.remove(key)
+            }
+        }
         return result
     }
 
