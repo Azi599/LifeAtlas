@@ -53,7 +53,26 @@ object MathEngine {
         var total=0L;var start=0L;var end=0L;var seen=false
         intervals.sortedBy{it.first}.forEach { (a,b)-> if(!seen){start=a;end=b;seen=true} else if(a<=end) end=maxOf(end,b) else {total+=end-start;start=a;end=b} };return total+if(seen) end-start else 0L
     }
-    fun pearson(pairs:List<Pair<Double,Double>>):Double? { if(pairs.size<3) return null;val x=pairs.map{it.first};val y=pairs.map{it.second};val mx=x.average();val my=y.average();val xx=x.sumOf{(it-mx)*(it-mx)};val yy=y.sumOf{(it-my)*(it-my)};if(xx==0.0 || yy==0.0) return null;return pairs.sumOf{(it.first-mx)*(it.second-my)}/kotlin.math.sqrt(xx*yy) }
+    fun pearson(pairs:List<Pair<Double,Double>>):Double? {
+        if(pairs.size<3 || pairs.any{(x,y)->!x.isFinite() || !y.isFinite()}) return null
+        val xScale=pairs.maxOf{kotlin.math.abs(it.first)}
+        val yScale=pairs.maxOf{kotlin.math.abs(it.second)}
+        if(xScale==0.0 || yScale==0.0) return null
+        val xMean=pairs.sumOf{it.first/xScale}/pairs.size
+        val yMean=pairs.sumOf{it.second/yScale}/pairs.size
+        var xx=0.0
+        var yy=0.0
+        var xy=0.0
+        for((a,b) in pairs) {
+            val x=a/xScale-xMean
+            val y=b/yScale-yMean
+            xx+=x*x
+            yy+=y*y
+            xy+=x*y
+        }
+        if(xx==0.0 || yy==0.0) return null
+        return (xy/kotlin.math.sqrt(xx)/kotlin.math.sqrt(yy)).coerceIn(-1.0,1.0)
+    }
     fun cashflow(income:BigDecimal,expenseMagnitude:BigDecimal)=income-expenseMagnitude.abs()
     fun snapshotBalance(anchor:BigDecimal,changesAfterAnchor:List<BigDecimal>)=anchor+sum(changesAfterAnchor)
     fun splitByDate(start:Instant,end:Instant,zone:ZoneId):Map<LocalDate,Long> {
