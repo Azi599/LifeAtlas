@@ -2,6 +2,9 @@ package com.lifeatlas.app
 
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.provider.MediaStore
 import android.util.Base64
 import android.view.WindowInsets
@@ -194,6 +197,7 @@ class LanguageAcceptanceTest {
                 rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("trend-chart"))
                 rule.onNodeWithTag("trend-chart").assertIsDisplayed()
             }
+            checkImageReceipt(expense)
             scenario("appearance", "晚上太亮了，切到深色模式。") {
                 assertEquals("dark", model.ui.value.theme)
                 rule.onNodeWithTag("command-status").assertIsDisplayed()
@@ -204,6 +208,57 @@ class LanguageAcceptanceTest {
         }
         val failed = results.objects().filter { !it.optBoolean("passed") }
         assertTrue(failed.joinToString("\n") { "${it.s("id")}: ${it.s("failure")}" }, failed.isEmpty())
+    }
+
+    private fun checkImageReceipt(expense: String) {
+        val id = "image-receipt"
+        if (selectedCases.isNotEmpty() && id !in selectedCases) return
+        val date = today.minusDays(3)
+        val resolver = rule.activity.contentResolver
+        val bitmap = Bitmap.createBitmap(1100, 600, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap).apply { drawColor(Color.WHITE) }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 64f }
+        listOf("支付明细", date.toString(), "12:15 午餐 28.60 元", "16:40 咖啡 12.30 元").forEachIndexed { index, line ->
+            canvas.drawText(line, 60f, 110f + index * 110f, paint)
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "language-acceptance-receipt.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/LifeAtlasAcceptanceInput")
+        }) ?: error("无法建立图片测试文件")
+        val input = "把图里的支出记到生活支出，保留发生日期和时间，给我核对。"
+        try {
+            resolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            scenario(id, input, submit = {
+                model.saveDraft(input)
+                model.addImage(uri)
+            }) { evidence ->
+                val state = model.ui.value
+                evidence.put("ocr", state.imageText)
+                assertTrue(state.imageText.contains("28.60"))
+                assertTrue(state.imageText.contains("12.30"))
+                val preview = state.pending ?: error("账单需要先给逐笔核对")
+                assertTrue(preview.optBoolean("imageImport"))
+                assertTrue(model.store.facts(expense, date.toString(), date.toString()).isEmpty())
+                show("-28.6 元")
+                show("-12.3 元")
+                capture("image-review")
+                confirmIfNeeded()
+                val rows = model.store.facts(expense, date.toString(), date.toString()).associateBy { it.s("value") }
+                assertEquals(setOf("-28.60", "-12.30"), rows.keys)
+                for ((amount, time) in listOf("-28.60" to "12:15", "-12.30" to "16:40")) {
+                    val row = rows.getValue(amount)
+                    val occurred = java.time.Instant.parse(row.s("occurred_at")).atZone(ZoneId.of(row.s("zone")))
+                    assertEquals(date.atTime(java.time.LocalTime.parse(time)), occurred.toLocalDateTime())
+                }
+                show("-28.60 元")
+                show("-12.30 元")
+            }
+        } finally {
+            model.clearImage()
+            bitmap.recycle()
+            resolver.delete(uri, null, null)
+        }
     }
 
     private fun checkGeneratedFeature(pluginId: String, fields: List<JSONObject>) {
@@ -268,22 +323,29 @@ class LanguageAcceptanceTest {
         return rows.single()
     }
 
-    private fun scenario(id: String, input: String, verify: (JSONObject) -> Unit) {
+    private fun scenario(
+        id: String,
+        input: String,
+        submit: (() -> Unit)? = null,
+        verify: (JSONObject) -> Unit
+    ) {
         if (selectedCases.isNotEmpty() && id !in selectedCases) return
         val evidence = obj("id" to id, "input" to input)
         val start = android.os.SystemClock.elapsedRealtime()
         try {
             go("首页")
             model.clearPending()
-            val field = rule.onNodeWithText("输入")
-            field.performClick().performTextReplacement(input)
+            if (submit == null) {
+                rule.onNodeWithText("输入").performClick().performTextReplacement(input)
+            }
             val before = model.ui.value
-            rule.onNodeWithTag("command-send").performClick()
+            if (submit != null) submit() else rule.onNodeWithTag("command-send").performClick()
             waitForWork(before)
             hideKeyboard()
             val state = model.ui.value
             evidence.put("response", state.result?.takeUnless { it === before.result } ?: JSONObject.NULL)
             evidence.put("preview", state.pending ?: JSONObject.NULL)
+            if (submit != null) evidence.put("ocr", state.imageText)
             assertTrue(state.status, state.error.isBlank())
             verify(evidence)
             evidence.put("passed", true)
