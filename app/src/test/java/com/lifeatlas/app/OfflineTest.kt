@@ -88,6 +88,9 @@ class OfflineTest {
         assertEquals(listOf("28.60","12.30"),steps.map{it.s("value")})
         assertEquals(listOf("2026-11-04T04:15:00Z","2026-11-04T08:40:00Z"),steps.map{it.s("occurredAt")})
         assertTrue(plan.optBoolean("review"))
+        val ocr = "支付明细\n\n2026-11-04\n\n12:15年餐 28.60元\n16:40 咖啡12.30元"
+        val extracted = OfflineReceipt.plan(ocr,"",listOf(meals),java.time.ZoneId.of("Asia/Shanghai"))!!
+        assertEquals(steps.map{it.s("value")},extracted.getJSONArray("steps").objects().map{it.getJSONObject("args").s("value")})
         assertNull(OfflineReceipt.plan(source.replace("午餐","退款"),"",listOf(meals)))
         assertNull(OfflineReceipt.plan(source.replace("2026-11-04",""),"",listOf(meals)))
     }

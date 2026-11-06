@@ -10,7 +10,7 @@ import java.time.ZoneId
 internal object OfflineReceipt {
     private val headers = setOf("支付明细","支出明细","消费记录","支出记录")
     private val headerDate = Regex("^(\\d{4})[-/年](\\d{1,2})[-/月](\\d{1,2})(?:日)?$")
-    private val receiptRow = Regex("^(?:(\\d{1,2}:\\d{2})\\s+)?(.+?)\\s+(?:[¥￥]\\s*)?(-?\\d+(?:\\.\\d{1,2})?)\\s*(元)?$")
+    private val receiptRow = Regex("^(?:(\\d{1,2}:\\d{2})\\s*)?([^0-9¥￥]+?)\\s*(?:[¥￥]\\s*)?(-?\\d+(?:\\.\\d{1,2})?)\\s*(元)?$")
     private val total = Regex("^(?:合计|小计|总计)\\s*[:：]?\\s*[¥￥]?-?\\d+(?:\\.\\d{1,2})?\\s*元?$")
 
     fun plan(source: String,input: String,metrics: List<JSONObject>,zone: ZoneId = ZoneId.systemDefault()):JSONObject? {
