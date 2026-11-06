@@ -212,6 +212,32 @@ class StorageTest {
         assertEquals("90",query.s("minutes"))
         assertEquals(1,query.getInt("untimed"))
     }
+    @Test fun freshDatabaseCreatesOnlyTheMetricNeededByAnOfflineRecord(){
+        assertTrue(db.metrics().isEmpty())
+        val today=LocalDate.now().toString()
+        val plan=Offline.plan("离线：新建「随手记」目录，记今天喝水450毫升，再列出今天记录",db)!!
+        val result=actions.execute(plan)
+        assertEquals("DONE",result.s("status"))
+        assertEquals(1,db.objects(all=true).count{it.s("type")=="FOLDER"})
+        val metric=db.metrics().single()
+        assertEquals("饮水量",metric.s("title"))
+        assertEquals("450",db.timeline(metric.s("id"),today,today,0).single().s("value"))
+        val query=result.getJSONObject("steps").getJSONObject("part3_s1").getJSONArray("records")
+        assertEquals(1,query.length())
+        assertEquals("450",query.getJSONObject(0).s("value"))
+        actions.execute(Offline.plan("今天饮水200毫升",db)!!)
+        assertEquals(1,db.metrics().size)
+        assertEquals(2,db.facts(metric.s("id")).size)
+    }
+
+    @Test fun freshCompoundSpendingCanQueryTheJustCreatedCategory(){
+        val plan=Offline.plan("记一笔今天午饭17元，再告诉我今天餐饮一共花了多少",db)!!
+        val result=actions.execute(plan)
+        val expense=result.getJSONObject("steps").getJSONObject("part2_s1").getJSONArray("cashflow").getJSONObject(0)
+        assertEquals("17",expense.s("expense"))
+        assertEquals(1,db.metrics().size)
+        assertEquals(1,db.facts().size)
+    }
     @Test fun naturalLanguageAccountTransferAndProjectionUseMeasuredAnchor(){
         fun create(title:String,role:String,unit:String):String = actions.single("atlas.createObject",obj(
             "type" to "METRIC","title" to title,

@@ -255,6 +255,16 @@ class Actions(val store:AtlasStore) {
                 val type=a.getString("type");require(type in objectTypes);val title=a.getString("title").trim();require(title.length in 1..120)
                 val config=a.optJSONObject("config") ?: JSONObject();if(type=="METRIC") validateMetric(config)
                 val parent=a.s("parentId").ifEmpty{null};if(parent!=null) require(store.one("atlas_objects",parent)!=null) {"上级对象不存在"}
+                if(type=="METRIC" && a.optBoolean("reuseMetric")) {
+                    val matches=store.query("SELECT id,config FROM atlas_objects WHERE type='METRIC' AND archived=0 AND title=? AND COALESCE(parent_id,'')=?",
+                        arrayOf(title,parent.orEmpty()))
+                    if(matches.isNotEmpty()) {
+                        val existing=matches.singleOrNull() ?: error("有多个同名指标，请选择要使用的指标")
+                        val before=JSONObject(existing.s("config"))
+                        require(listOf("kind","unit","role").all{before.s(it)==config.s(it)}) {"同名指标的记录方式不同，请先核对"}
+                        return obj("id" to existing.s("id"),"title" to title)
+                    }
+                }
                 val id=a.s("id").ifEmpty{uid()};val t=now();store.put("atlas_objects",obj("id" to id,"parent_id" to parent,"type" to type,"title" to title,"config" to config.toString(),"plugin_id" to a.s("pluginId").ifEmpty{null},"revision" to 1,"archived" to 0,"created_at" to t,"updated_at" to t));return obj("id" to id,"title" to title)
             }
             "atlas.updateObject" -> {
