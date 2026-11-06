@@ -127,8 +127,7 @@ class UiTest {
         rule.onNodeWithTag("atlas-list").performScrollToNode(row)
         rule.onNode(hasText("修改") and hasAnyAncestor(row)).performScrollTo().performClick()
         rule.onNodeWithText("数值").performTextReplacement("3")
-        closeKeyboard()
-        rule.onNodeWithText("保存").performClick()
+        rule.onNodeWithText("保存").assertIsDisplayed().performClick()
         rule.waitUntil(10000) { vm.store.facts(metric).single().s("value")=="3" && !vm.ui.value.busy }
         rule.onNode(hasText("3 杯") and hasAnyAncestor(row)).assertIsDisplayed()
     }
