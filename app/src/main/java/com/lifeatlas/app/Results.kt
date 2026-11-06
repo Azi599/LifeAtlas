@@ -24,6 +24,7 @@ import org.json.JSONObject
 
         steps.keys().forEach{key->val value=steps.optJSONObject(key) ?: return@forEach
             if(value.has("status"))Text(buildState(value.s("status")))
+            if(value.has("duration"))Text("有效时长 ${value.s("duration")} ${value.s("unit")}")
             if(value.has("update")){val release=value.getJSONObject("update");Text("可更新至 ${release.s("versionName",release.optLong("versionCode").toString())}")}
             if(value.has("points"))Trend(value.getJSONArray("points").objects(),value.s("unit"),value.s("chart","line"))
 

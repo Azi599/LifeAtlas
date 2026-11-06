@@ -466,6 +466,12 @@ class Actions(val store:AtlasStore) {
                 }
             }
         }
-        return obj("id" to timer.s("id"),"state" to timer.s("state"))
+        val result = obj("id" to timer.s("id"),"state" to timer.s("state"))
+        if(action=="time.stop") {
+            val unit=store.config(timer.s("metric_id")).s("unit")
+            val seconds=MathEngine.sum(periods.objects().map{p->secondsBetween(Instant.parse(p.s("start")),Instant.parse(p.s("end")))})
+            result.put("duration",Units.convert(seconds,"s",unit).stripTrailingZeros().toPlainString()).put("unit",unit)
+        }
+        return result
     }
 }

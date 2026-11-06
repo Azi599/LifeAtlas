@@ -26,7 +26,7 @@ class OfflineTest {
     }
 
     @Test fun spokenExpenseShowsChoicesWithExactAmount() {
-        val plan = Offline.plan("晚饭花了18块5",listOf(meals,other),today)!!
+        val plan = Offline.plan("花了18块5",listOf(meals,other),today)!!
         assertTrue(plan.has("question"))
         assertFalse(plan.has("steps"))
         val option = plan.getJSONArray("options").getJSONObject(0).getJSONObject("plan")
