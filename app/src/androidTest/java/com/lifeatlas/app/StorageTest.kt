@@ -226,8 +226,9 @@ class StorageTest {
         assertNotEquals(existing,sandboxMetric)
         assertTrue(db.facts(sandboxMetric).isEmpty())
         assertEquals("14",db.facts(existing).single().s("value"))
-        val unsafe=template.copyJson().put("workflows",JSONArray().put(obj("triggerMetricKey" to "leaves",
-            "steps" to JSONArray().put(obj("actionId" to "atlas.record","args" to obj("metricId" to existing)))))
+        val liveWrite=obj("actionId" to "atlas.record","args" to obj("metricId" to existing))
+        val workflow=obj("triggerMetricKey" to "leaves","steps" to JSONArray().put(liveWrite))
+        val unsafe=template.copyJson().put("workflows",JSONArray().put(workflow))
         assertThrows(IllegalArgumentException::class.java){sandboxPluginTemplate(unsafe)}
     }
     @Test fun financeTransferAndAnchorRules(){
