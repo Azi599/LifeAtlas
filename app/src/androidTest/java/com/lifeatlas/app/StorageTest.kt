@@ -453,9 +453,34 @@ class StorageTest {
         assertEquals("62",db.dailySeries(snapshot,"2026-11-01","2026-11-01").first().s("value"));assertEquals("7",db.dailySeries(change,"2026-11-01","2026-11-01").first().s("value"))
     }
     @Test fun schemaFourMigratesWithoutLosingRecords() {
-        val id=metric();actions.single("atlas.record",obj("metricId" to id,"value" to "65.5","date" to "2026-11-04"));val sql=db.writableDatabase
-        sql.execSQL("DROP TABLE atlas_versions");sql.execSQL("DROP TABLE atlas_themes");sql.execSQL("DROP TABLE atlas_appearance");sql.execSQL("DROP INDEX event_date");listOf("local_date","occurred_at","precision").forEach{sql.execSQL("ALTER TABLE atlas_events DROP COLUMN "+it)};sql.version=4;db.close();db=AtlasStore(context,"tests.db");actions=Actions(db)
-        assertEquals("65.5",db.facts(id).first().s("value"));assertEquals(7,db.readableDatabase.version);assertTrue(db.query("SELECT * FROM atlas_versions").isNotEmpty());assertEquals("lavender",ThemeRepository(db).current().s("id"))
+        val id=metric()
+        actions.single("atlas.record",obj("metricId" to id,"value" to "65.5","date" to "2026-11-04"))
+        val sql=db.writableDatabase
+        sql.setForeignKeyConstraintsEnabled(false)
+        sql.beginTransaction()
+        try {
+            sql.execSQL("DROP TABLE atlas_versions")
+            sql.execSQL("DROP TABLE atlas_themes")
+            sql.execSQL("DROP TABLE atlas_appearance")
+            sql.execSQL("""CREATE TABLE atlas_events_v4(
+                id TEXT PRIMARY KEY,raw_input TEXT NOT NULL,source TEXT NOT NULL,
+                created_at TEXT NOT NULL,updated_at TEXT NOT NULL,zone TEXT NOT NULL)""")
+            sql.execSQL("INSERT INTO atlas_events_v4 SELECT id,raw_input,source,created_at,updated_at,zone FROM atlas_events")
+            sql.execSQL("DROP TABLE atlas_events")
+            sql.execSQL("ALTER TABLE atlas_events_v4 RENAME TO atlas_events")
+            sql.version=4
+            sql.setTransactionSuccessful()
+        } finally {
+            sql.endTransaction()
+            db.close()
+        }
+        db=AtlasStore(context,"tests.db")
+        actions=Actions(db)
+        assertEquals("65.5",db.facts(id).single().s("value"))
+        assertEquals(7,db.readableDatabase.version)
+        assertTrue(db.query("PRAGMA foreign_key_check").isEmpty())
+        assertTrue(db.query("SELECT * FROM atlas_versions").isNotEmpty())
+        assertEquals("lavender",ThemeRepository(db).current().s("id"))
     }
 
     @Test fun pluginInstallsVersionedWorkflowAndUpgradePreviewCountsHistory() {

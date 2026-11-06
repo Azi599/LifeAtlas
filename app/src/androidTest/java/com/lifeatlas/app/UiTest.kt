@@ -22,18 +22,31 @@ class UiTest {
     }
     @Test fun dynamicPluginRendersAndAcceptsRecord(){
         val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
-        val manifest=obj("id" to "test.random${System.currentTimeMillis()}","title" to "植物养护测试","version" to 1,"metrics" to JSONArray().put(obj("key" to "water","title" to "浇水量","kind" to "CHANGE","unit" to "ml","aggregate" to "SUM")),"views" to JSONArray().put(obj("title" to "浇水趋势","metricKey" to "water","chart" to "bar")))
+        val manifest=obj("id" to "test.random${System.currentTimeMillis()}","title" to "蚀刻实验","version" to 1,
+            "metrics" to JSONArray().put(obj("key" to "depth","title" to "凹槽深度","kind" to "SNAPSHOT",
+                "unit" to "毫米","aliases" to JSONArray().put("沟槽读数"))),
+            "views" to JSONArray().put(obj("title" to "深度趋势","metricKey" to "depth","chart" to "bar")))
         val result=vm.actions.single("atlas.installPlugin",obj("manifest" to manifest),confirmed=true)
         val project=result.getJSONObject("steps").getJSONObject("result").s("id")
         val metric=vm.store.objects(project).first{it.s("type")=="METRIC"}
-        vm.actions.single("atlas.record",obj("metricId" to metric.s("id"),"value" to "250","date" to java.time.LocalDate.now().toString()))
         runBlocking{vm.refresh().join()};rule.waitForIdle()
+        rule.onNodeWithTag("command-input").performTextReplacement("今天测得0.18厘米，录入到「沟槽读数」")
+        rule.onNodeWithTag("command-send").performClick()
+        rule.waitUntil(10000){!vm.ui.value.busy && vm.store.facts(metric.s("id")).size==1}
+        val saved=vm.store.facts(metric.s("id")).single()
+        org.junit.Assert.assertEquals(0,saved.s("value").toBigDecimal().compareTo("1.8".toBigDecimal()))
+        closeKeyboard()
+        rule.onNodeWithTag("tab-history").performClick()
+        val row=hasTestTag("timeline-item") and hasAnyDescendant(hasText("凹槽深度"))
+        rule.onNodeWithTag("atlas-list").performScrollToNode(row)
+        rule.onNode(row).assertIsDisplayed()
         rule.onNodeWithTag("tab-settings").performClick()
         rule.onNodeWithText("空间管理").performClick()
-        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("植物养护测试"))
-        rule.onNodeWithText("植物养护测试").performScrollTo().performClick()
-        rule.onNodeWithText("浇水量").performScrollTo().performClick()
-        rule.onNodeWithText("新增记录").assertExists()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("蚀刻实验"))
+        rule.onNodeWithText("蚀刻实验").performScrollTo().performClick()
+        rule.onNodeWithText("深度趋势").performScrollTo().performClick()
+        rule.waitUntil(10000){rule.onAllNodesWithTag("trend-chart").fetchSemanticsNodes().isNotEmpty()}
+        rule.onNodeWithTag("trend-chart").performScrollTo().assertIsDisplayed()
         capture("lifeatlas-project.png")
     }
     @Test fun ambiguousRecordCanChangeMetricBeforeSaving() {

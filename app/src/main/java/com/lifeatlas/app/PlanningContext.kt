@@ -78,7 +78,7 @@ internal class PlanningContext(private val original: JSONObject) {
             "title" to row.s("title"), "type" to row.s("type"),
             "parentId" to alias(row.s("parent_id"), "o")
         ).apply {
-            listOf("kind", "unit", "aggregate", "role", "fields").forEach { key ->
+            listOf("kind", "unit", "aggregate", "role", "fields", "aliases", "minimum", "maximum", "decimalPlaces").forEach { key ->
                 config.opt(key)?.let { put(key, it) }
             }
             if(row.s("type")=="VIEW") {

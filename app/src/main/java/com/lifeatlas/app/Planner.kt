@@ -49,7 +49,7 @@ class Planner(private val actions: Actions) {
             常用操作参数：
             atlas.record: metricId,date,value?,unit?,occurredAt?,startAt?,endAt?,zone?,fields?（对象）,eventId?。
             atlas.editRecord: id,value?,date?,fields?（对象）,occurredAt?,startAt?,endAt?,clearTime?。
-            atlas.createObject: type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?,fields?}。
+            atlas.createObject: type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?,fields?,aliases?,minimum?,maximum?,decimalPlaces?}。aliases 使用用户明确给出的其他叫法。
             kind 为 SNAPSHOT/CHANGE/ALLOCATION，记录类型只在内部使用。
             字段用数组，例如 [{"id":"location","title":"地点","type":"text"},{"id":"completed","title":"完成","type":"boolean"}]。
             字段类型 text/decimal/date/boolean/choice，id 用英文字母开头，title 显示原名称。
