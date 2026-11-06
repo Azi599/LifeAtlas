@@ -68,6 +68,8 @@ object Offline {
     private val layoutChart = Regex("^把(?:首页|分析页?)?([“「\"][^”」\"]+[”」\"])(?:卡片|图表)(隐藏|移到(?:首页|分析页?)最前面)(?:[,，]数据别删)?$")
     private val styleChart = Regex("^把(?:刚才那个|刚才的)?(.+?)图表(?:从(?:折线图|柱状图|热力图))?改成(折线图|柱状图|热力图)$")
     private val openChart = Regex("^打开(?:刚才的)?(.+?)图表(?:[,，]告诉我数据来自哪个指标、哪个日期范围)?$")
+    private val writeAndMeasure = Regex("^(.+?)[;；]分别记下并告诉我总占用时间$")
+    private val measureExisting = Regex("^($dateWord)(?:的|那段)?(.+?)和(.+?)重叠后[,，]?总占用(?:究竟)?多少(?:分钟|时间)$")
     private val weightedMark = Regex("(\\d+)次([+-]?\\d+(?:\\.\\d+)?)分")
     private val weightedTotal = Regex("^假设有(\\d+)次")
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
@@ -116,6 +118,34 @@ object Offline {
             val month=match.groupValues[1].toIntOrNull()?.takeIf{it in 1..12} ?: return null
             val period=java.time.YearMonth.of(today.year,month)
             return command(input,"finance.cashflow",obj("from" to period.atDay(1).toString(),"to" to period.atEndOfMonth().toString(),"includeBasis" to true))
+        }
+        measureExisting.matchEntire(compact(request))?.let { match ->
+            val (date,first,second)=match.destructured
+            val ids = listOf(first,second).map { name ->
+                namedMetrics(name,metrics).singleOrNull{JSONObject(it.s("config")).s("kind")=="ALLOCATION"}?.s("id")
+                    ?: return question(input,"请选择要比较的活动")
+            }
+            val day=parseDate(date,today)?.toString() ?: return null
+            return command(input,"time.occupied",obj("metricIds" to JSONArray(ids),"from" to day,"to" to day))
+        }
+        if ((request.contains("不知道几点") || request.contains("没有具体开始时间")) &&
+            request.contains("重叠") && request.contains("能确定")) {
+            return obj("localAnswer" to "只有时长，缺少起止时间，无法确定是否重叠。")
+        }
+        writeAndMeasure.matchEntire(request)?.let { match ->
+            val parts=match.groupValues[1].split(Regex("[,，]")).map(String::trim)
+            if(parts.size !in 2..6) return null
+            val date=dateLead.find(parts.first())?.value.orEmpty()
+            val steps=parts.mapIndexed { index,part->
+                val phrase=if(index>0 && dateLead.find(part)==null) date+part else part
+                val step=plan(phrase,metrics,today)?.optJSONArray("steps")?.optJSONObject(0) ?: return null
+                val args=step.getJSONObject("args")
+                if(step.s("actionId")!="atlas.record" || args.s("startAt").isBlank() || args.s("endAt").isBlank()) return null
+                step.put("stepId","s${index+1}")
+            }
+            val refs=JSONArray(steps.map{step->obj("\$ref" to (step.s("stepId")+".id"))})
+            return command(input,"time.occupied",JSONObject()).put("steps",JSONArray(steps).put(
+                obj("stepId" to "total","actionId" to "time.occupied","args" to obj("recordIds" to refs))))
         }
         listDay.matchEntire(compact(request))?.let { match ->
             val day=parseDate(match.groupValues[1],today)?.toString() ?: return null
