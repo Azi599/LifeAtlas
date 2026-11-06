@@ -4,6 +4,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -91,8 +93,8 @@ val LocalAtlasBackground=staticCompositionLocalOf{Color.White}
     val background=MaterialTheme.colorScheme.surface
     androidx.compose.material3.Surface(modifier,shape=shape,color=background){CompositionLocalProvider(LocalAtlasBackground provides background,LocalContentColor provides MaterialTheme.colorScheme.onSurface){content()}}
 }
-@Composable fun OutlinedTextField(value:String,onValueChange:(String)->Unit,modifier:Modifier=Modifier,label:(@Composable ()->Unit)?=null,enabled:Boolean=true,singleLine:Boolean=false,minLines:Int=1,maxLines:Int=if(singleLine)1 else Int.MAX_VALUE,visualTransformation:androidx.compose.ui.text.input.VisualTransformation=androidx.compose.ui.text.input.VisualTransformation.None) {
-    androidx.compose.material3.OutlinedTextField(value,onValueChange,modifier=modifier,label=label,enabled=enabled,singleLine=singleLine,minLines=minLines,maxLines=maxLines,visualTransformation=visualTransformation,colors=OutlinedTextFieldDefaults.colors(focusedContainerColor=MaterialTheme.colorScheme.surface,unfocusedContainerColor=MaterialTheme.colorScheme.surface,disabledContainerColor=MaterialTheme.colorScheme.surface))
+@Composable fun OutlinedTextField(value:String,onValueChange:(String)->Unit,modifier:Modifier=Modifier,label:(@Composable ()->Unit)?=null,enabled:Boolean=true,singleLine:Boolean=false,minLines:Int=1,maxLines:Int=if(singleLine)1 else Int.MAX_VALUE,visualTransformation:androidx.compose.ui.text.input.VisualTransformation=androidx.compose.ui.text.input.VisualTransformation.None,keyboardOptions:KeyboardOptions=KeyboardOptions.Default,keyboardActions:KeyboardActions=KeyboardActions.Default) {
+    androidx.compose.material3.OutlinedTextField(value,onValueChange,modifier=modifier,label=label,enabled=enabled,singleLine=singleLine,minLines=minLines,maxLines=maxLines,visualTransformation=visualTransformation,keyboardOptions=keyboardOptions,keyboardActions=keyboardActions,colors=OutlinedTextFieldDefaults.colors(focusedContainerColor=MaterialTheme.colorScheme.surface,unfocusedContainerColor=MaterialTheme.colorScheme.surface,disabledContainerColor=MaterialTheme.colorScheme.surface))
 }
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)

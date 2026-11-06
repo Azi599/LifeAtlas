@@ -95,7 +95,7 @@ class UiTest {
         rule.onNodeWithText("HEX").performTextClearance();rule.onNodeWithText("HEX").performTextInput("#BAA1D7");rule.onNodeWithText("选择").performClick();closeKeyboard()
         rule.onNodeWithText("背景：纯色").performScrollTo().performClick();rule.onNodeWithText("渐变").performClick();rule.onNodeWithText("添加色标").performScrollTo().performClick()
         rule.onNodeWithText("色标 3").performScrollTo().performClick();rule.onNodeWithText("HEX").performTextClearance();rule.onNodeWithText("HEX").performTextInput("#FBCBDF");rule.onNodeWithText("选择").performClick();closeKeyboard()
-        rule.onNodeWithText("另存为新主题").performScrollTo().assertIsDisplayed();capture("gradient-editor.png");rule.onNodeWithText("另存为新主题").performClick()
+        rule.onNodeWithText("另存为新主题").performScrollTo().assertIsDisplayed();capture("gradient-editor.png");rule.onNodeWithText("另存为新主题").performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick){it()}
         rule.waitUntil(10000){vm.ui.value.themeId!="lavender" && !vm.ui.value.busy}
         val savedId=vm.ui.value.themeId;val saved=org.json.JSONObject(vm.ui.value.themeConfig).getJSONObject("light")
         org.junit.Assert.assertEquals("#BAA1D7",saved.s("primary"));org.junit.Assert.assertTrue(saved.getBoolean("gradient"));org.junit.Assert.assertEquals(3,saved.getJSONArray("stops").length())
@@ -118,7 +118,8 @@ class UiTest {
         listOf("workspace","history","analytics","settings").forEach { id -> rule.onNodeWithTag("tab-$id").assertIsDisplayed() }
         rule.onNodeWithText("空间管理").assertDoesNotExist()
         rule.onNodeWithTag("command-input").performTextReplacement("记录今天${title}两杯")
-        rule.onNodeWithTag("command-send").performClick()
+        rule.onNodeWithTag("command-send").assertIsDisplayed()
+        rule.onNodeWithTag("command-input").performImeAction()
         rule.waitUntil(10000) { vm.store.facts(metric).isNotEmpty() && !vm.ui.value.busy }
         closeKeyboard()
         rule.onNodeWithTag("tab-history").performClick()

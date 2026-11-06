@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,7 +29,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import org.json.JSONArray
@@ -131,12 +133,15 @@ class MainActivity:ComponentActivity() {
         bottomBar={Column(Modifier.imePadding()) {
             if(page=="workspace") Surface(Modifier.fillMaxWidth()) {Column(Modifier.padding(horizontal=18.dp,vertical=8.dp)) {
                 if(state.status.isNotBlank()) Text(state.status,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=if(state.error.isNotBlank())MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(bottom=4.dp).testTag("command-status"))
-                OutlinedTextField(command,vm::saveDraft,modifier=Modifier.fillMaxWidth().testTag("command-input"),label={Text("输入")},minLines=1,maxLines=3)
+                val canSend = !state.busy && (command.isNotBlank() || state.imageText.isNotBlank())
+                OutlinedTextField(command,vm::saveDraft,modifier=Modifier.fillMaxWidth().testTag("command-input"),
+                    label={Text("输入")},minLines=1,maxLines=3,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),
+                    keyboardActions=KeyboardActions(onSend={if(canSend) vm.submit(command)}))
                 Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
                     OutlinedButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "换图")}
                     if(state.image!=null)OutlinedButton(enabled=!state.busy,onClick=vm::clearImage){Text("移除")}
                     Spacer(Modifier.weight(1f))
-                    Button(modifier=Modifier.testTag("command-send"),enabled=!state.busy && (command.isNotBlank() || state.imageText.isNotBlank()),onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "发送")}
+                    Button(modifier=Modifier.testTag("command-send"),enabled=canSend,onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "发送")}
                 }
             }}
             if(!keyboard)NavigationBar(modifier=Modifier.testTag("atlas-navigation"),containerColor=MaterialTheme.colorScheme.surface) {tabs.forEachIndexed{i,(id,title)->NavigationBarItem(modifier=Modifier.testTag("tab-$id"),colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=currentTab==id,onClick={page=id;selected=null;settingsSubpage=false},icon={NavGlyph(if(i==0)0 else i+1,currentTab==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelMedium)})}}
