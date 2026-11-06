@@ -136,6 +136,26 @@ class StorageTest {
         val id=metric("ALLOCATION","UNION_DURATION");actions.single("atlas.record",obj("metricId" to id,"date" to "2026-11-04","value" to "7200","startAt" to "2026-11-04T23:00:00Z","endAt" to "2026-11-05T01:00:00Z","zone" to "UTC"))
         val previous=java.util.TimeZone.getDefault();try{java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));assertEquals("3600",db.aggregate(id,"2026-11-05","2026-11-05").s("value"))}finally{java.util.TimeZone.setDefault(previous)}
     }
+    @Test fun naturalLanguageSavesIntervalsAndMeasuresTheirUnion(){
+        fun activity(title:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,
+            "config" to obj("kind" to "ALLOCATION","unit" to "秒","aggregate" to "SUM")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val study=activity("学习时间")
+        val reading=activity("阅读时长")
+        val day=LocalDate.now().minusDays(1).toString()
+        val plan=Offline.plan("昨天08:00到09:30学习，08:45到09:15阅读；分别记下并告诉我总占用时间",db)!!
+        actions.validateProposedPlan(plan)
+        val result=actions.execute(plan).getJSONObject("steps").getJSONObject("total")
+        assertEquals("90",result.s("minutes"))
+        assertEquals(2,result.getInt("knownIntervals"))
+        assertEquals(day,db.facts(study).single().s("local_date"))
+        assertEquals(day,db.facts(reading).single().s("local_date"))
+        actions.single("atlas.record",obj("metricId" to study,"date" to day,"value" to "1200"))
+        val query=actions.dispatch("time.occupied",obj("metricIds" to JSONArray(listOf(study,reading)),"from" to day,"to" to day))
+        assertEquals("90",query.s("minutes"))
+        assertEquals(1,query.getInt("untimed"))
+    }
     @Test fun csvImportRejectsBadRowsAndDeduplicates(){
         val id=metric("CHANGE","SUM");val source="value,local_date\n3,2026-11-01\nbad,2026-11-01\n";val errors=StringWriter();val result=CsvCodec.import(StringReader(source),actions,"test-csv",id,"value","local_date",errors)
         assertEquals(1,result.getInt("accepted"));assertEquals(1,result.getInt("rejected"));assertEquals(1,db.facts(id).size);assertTrue(errors.toString().contains("3,"));CsvCodec.import(StringReader(source),actions,"test-csv",id,"value","local_date",StringWriter());assertEquals(1,db.facts(id).size)

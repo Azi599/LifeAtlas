@@ -119,7 +119,7 @@ internal class PlanningContext(private val original: JSONObject) {
                 key == "fields" -> value
                 key == "parentId" && value == "null" -> JSONObject.NULL
                 key in referenceKeys -> bindReference(value)
-                key in setOf("metrics", "changeMetricIds", "metricIds") && value is JSONArray -> JSONArray().apply {
+                key in setOf("metrics", "changeMetricIds", "metricIds", "recordIds") && value is JSONArray -> JSONArray().apply {
                     for (index in 0 until value.length()) {
                         val item = value.get(index)
                         put(if (item is JSONObject) bindFields(item) else bindReference(item))

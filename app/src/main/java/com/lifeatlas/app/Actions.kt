@@ -45,6 +45,7 @@ class Actions(val store:AtlasStore) {
         "atlas.setWorkflowStatus" to "启停工作流 args id,enabled",
         "atlas.deleteWorkflow" to "删除工作流 args id，可撤销",
         "atlas.workflow" to "创建或升级版本化工作流 args id?,title,spec={triggerMetricId,condition?:表达式,steps:[{actionId,args}]}，保存记录时执行一次",
+        "time.occupied" to "多指标实际占用时长，重叠只算一次 args recordIds 或 metricIds,from,to；仅有时长的记录单列",
         "time.start" to "开始计时 args metricId（ALLOCATION）",
         "time.pause" to "暂停 args timerId",
         "time.resume" to "恢复 args timerId",
@@ -378,6 +379,7 @@ class Actions(val store:AtlasStore) {
             "atlas.setWorkflowStatus"->{val row=store.one("atlas_workflows",a.getString("id")) ?: error("工作流不存在");store.put("atlas_workflows",row.put("enabled",if(a.getBoolean("enabled"))1 else 0));return obj("id" to row.s("id"))}
             "atlas.deleteWorkflow"->{store.remove("atlas_workflows",a.getString("id"));return obj("message" to "工作流已删除")}
             "time.start","time.pause","time.resume","time.stop" -> return timer(action,a)
+            "time.occupied" -> return store.occupancy(a)
             "finance.cashflow" -> {
                 val metrics = a.optJSONArray("metricIds")?.let{items->(0 until items.length()).map(items::getString).toSet()}.orEmpty()
                 val from=a.getString("from");val to=a.getString("to")

@@ -35,6 +35,16 @@ import org.json.JSONObject
             }
             if(value.has("method") && value.has("metricId")) Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text(objects.firstOrNull{it.s("id")==value.s("metricId")}?.s("title") ?: "统计结果");Text("${value.s("value","暂无数据")} ${value.s("unit")}",style=MaterialTheme.typography.headlineSmall);Text("${methodName(value.s("method"))} · ${value.optLong("usedCount",value.optLong("count"))} 条")}}
             if(value.has("pearson"))OutlinedCard(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("相关系数 ${value.s("pearson","无法计算")}");Text("配对样本 ${value.optInt("samplePairs")}")}}
+            if(value.optBoolean("occupancy")) {
+                OutlinedCard(Modifier.fillMaxWidth()){
+                    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        Text("已知时段占用",style=MaterialTheme.typography.titleMedium)
+                        Text(value.s("minutes").takeIf{it.isNotBlank()}?.let{"$it 分钟"} ?: "暂无可计算时段",
+                            style=MaterialTheme.typography.headlineSmall)
+                        if(value.optInt("untimed")>0) Text("${value.optInt("untimed")} 条缺少起止时间，无法判断是否重叠")
+                    }
+                }
+            }
             if(value.has("cashflow")) {
                 val flows=value.getJSONArray("cashflow").objects()
                 if(flows.isEmpty()) Text("所选日期没有收支记录")
