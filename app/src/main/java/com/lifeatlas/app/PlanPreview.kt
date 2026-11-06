@@ -98,7 +98,14 @@ import java.time.LocalDate
                 }
             }
             if(!needsMetricSelection) PlanReview.totals(edited,objects).forEach{Text(it,style=MaterialTheme.typography.titleMedium)}
-            (plan.optJSONArray("impact") ?: JSONArray()).objects().forEach{impact->Text(impact.s("title")+" · "+impact.optLong("count")+" 条记录");if(impact.s("oldUnit")!=impact.s("newUnit"))Text(impact.s("oldUnit")+" → "+impact.s("newUnit")+" × "+impact.s("factor"))}
+            (plan.optJSONArray("impact") ?: JSONArray()).objects().forEach { impact ->
+                Text(impact.s("title")+" · "+impact.optLong("count")+" 条记录")
+                if(impact.s("oldUnit")!=impact.s("newUnit"))Text(impact.s("oldUnit")+" → "+impact.s("newUnit")+" × "+impact.s("factor"))
+                for((key,label) in listOf("addedFields" to "新增字段","removedFields" to "表单移除字段","newRequiredFields" to "新增必填")) {
+                    val fields=impact.optJSONArray(key) ?: continue
+                    if(fields.length()>0) Text("$label · "+(0 until fields.length()).joinToString("、"){fields.getString(it)})
+                }
+            }
             if(needsHistory)Pick("历史记录",listOf("recalculate" to "按新规则重算","preserve" to "保留原计算结果"),historyMode){historyMode=it}
             if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,modifier=Modifier.testTag("plan-error"))
             if(validation.isNotBlank())Text(validation,color=MaterialTheme.colorScheme.error)

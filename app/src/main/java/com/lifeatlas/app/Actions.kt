@@ -438,7 +438,16 @@ class Actions(val store:AtlasStore) {
             val existing=store.query("SELECT id,title,config FROM atlas_objects WHERE plugin_id=? AND type='METRIC'",arrayOf(plugin))
             (manifest.optJSONArray("metrics") ?: JSONArray()).objects().forEach{next->val old=existing.firstOrNull{JSONObject(it.s("config")).s("key")==next.s("key")} ?: return@forEach
                 val count=store.query("SELECT COUNT(*) n FROM atlas_facts WHERE metric_id=? AND deleted=0",arrayOf(old.s("id"))).first().getLong("n")
-                result.put(obj("title" to next.s("title"),"count" to count,"oldUnit" to JSONObject(old.s("config")).s("unit"),"newUnit" to next.s("unit"),"factor" to next.s("migrationFactor"),"expressionChanged" to (JSONObject(old.s("config")).optJSONObject("expression")?.toString()!=next.optJSONObject("expression")?.toString())))
+                val before=JSONObject(old.s("config"))
+                val fields=(before.optJSONArray("fields") ?: JSONArray()).objects().associateBy{it.s("id")}
+                val nextFields=(next.optJSONArray("fields") ?: JSONArray()).objects().associateBy{it.s("id")}
+                result.put(obj("title" to next.s("title"),"count" to count,"oldUnit" to before.s("unit"),
+                    "newUnit" to next.s("unit"),"factor" to next.s("migrationFactor"),
+                    "expressionChanged" to (before.optJSONObject("expression")?.toString()!=next.optJSONObject("expression")?.toString()),
+                    "addedFields" to JSONArray((nextFields.keys-fields.keys).map{nextFields.getValue(it).s("title",it)}),
+                    "removedFields" to JSONArray((fields.keys-nextFields.keys).map{fields.getValue(it).s("title",it)}),
+                    "newRequiredFields" to JSONArray(nextFields.filter{(key,field)->field.optBoolean("required") &&
+                        fields[key]?.optBoolean("required")!=true}.map{(key,field)->field.s("title",key)})))
             }
         };return result
     }
@@ -490,9 +499,45 @@ class Actions(val store:AtlasStore) {
             }
         }
         existing.forEach{store.put("atlas_plugins",it.put("status","SUPERSEDED"))};store.put("atlas_plugins",obj("id" to "$plugin@$version","plugin_id" to plugin,"version" to version,"manifest" to m.toString(),"status" to "ACTIVE","created_at" to now()))
-        if(upgrade) store.query("SELECT * FROM atlas_objects WHERE plugin_id=? AND type='VIEW' AND archived=0",arrayOf(plugin)).forEach{store.put("atlas_objects",it.put("archived",1).put("updated_at",now()))}
-        val views=m.optJSONArray("views") ?: JSONArray();views.objects().forEach{v->dispatch("atlas.createObject",obj("type" to "VIEW","title" to v.s("title","趋势"),"parentId" to parent,"pluginId" to plugin,"config" to obj("component" to "chart","metricId" to ids.getValue(v.getString("metricKey")),"chart" to v.s("chart","line"))))}
-        (m.optJSONArray("screens") ?: JSONArray()).objects().forEach{screen->val components=JSONArray(screen.getJSONArray("components").toString());components.objects().forEach{c->if(c.has("metricKey"))c.put("metricId",ids.getValue(c.getString("metricKey")))};dispatch("atlas.createObject",obj("type" to "VIEW","title" to screen.s("title","页面"),"parentId" to parent,"pluginId" to plugin,"config" to obj("component" to "schema","components" to components)))}
+        val previousViews=if(upgrade) store.query(
+            "SELECT * FROM atlas_objects WHERE plugin_id=? AND type='VIEW' ORDER BY archived,updated_at DESC",
+            arrayOf(plugin)
+        ) else emptyList()
+        val reusedViews=hashSetOf<String>()
+        val viewKeys=hashSetOf<String>()
+        fun saveView(title:String,key:String,config:JSONObject) {
+            require(viewKeys.add(key)){"功能页面标识重复，请使用不同的名称或标识"}
+            val candidates=previousViews.filter{it.s("id") !in reusedViews}
+            val existingView=candidates.firstOrNull{JSONObject(it.s("config")).s("pluginViewKey")==key}
+                ?: candidates.firstOrNull{
+                    val before=JSONObject(it.s("config"))
+                    before.s("pluginViewKey").isBlank() && before.s("component")==config.s("component") &&
+                        it.s("title")==title && before.s("metricId")==config.s("metricId")
+                }
+            config.put("pluginViewKey",key)
+            if(existingView==null) dispatch("atlas.createObject",obj("type" to "VIEW","title" to title,
+                "parentId" to parent,"pluginId" to plugin,"config" to config))
+            else {
+                val id=existingView.s("id")
+                reusedViews.add(id)
+                dispatch("atlas.updateObject",obj("id" to id,"title" to title,"config" to config,"archived" to false))
+            }
+        }
+        (m.optJSONArray("views") ?: JSONArray()).objects().forEach { view ->
+            val title=view.s("title","趋势")
+            val metric=view.getString("metricKey")
+            saveView(title,"chart:"+view.s("key","$metric:$title"),
+                obj("component" to "chart","metricId" to ids.getValue(metric),"chart" to view.s("chart","line")))
+        }
+        (m.optJSONArray("screens") ?: JSONArray()).objects().forEach { screen ->
+            val title=screen.s("title","页面")
+            val components=JSONArray(screen.getJSONArray("components").toString())
+            components.objects().forEach{component->if(component.has("metricKey")) component.put("metricId",ids.getValue(component.getString("metricKey")))}
+            saveView(title,"screen:"+screen.s("key",title),obj("component" to "schema","components" to components))
+        }
+        previousViews.filter{it.optInt("archived")==0 && it.s("id") !in reusedViews}.forEach { view ->
+            dispatch("atlas.updateObject",obj("id" to view.s("id"),"archived" to true))
+        }
         val prefix="plugin:"+plugin+":workflow:"
         store.query("SELECT * FROM atlas_workflows WHERE substr(id,1,?)=?",arrayOf(prefix.length.toString(),prefix)).forEach{store.put("atlas_workflows",it.put("enabled",0))}
         fun bind(value:Any):Any=when(value){is JSONObject->if(value.has("\$metric"))ids.getValue(value.getString("\$metric"))else JSONObject().apply{value.keys().forEach{put(it,bind(value.get(it)))}};is JSONArray->JSONArray().apply{for(i in 0 until value.length())put(bind(value.get(i)))};else->value}

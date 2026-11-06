@@ -126,6 +126,36 @@ class StorageTest {
         assertEquals("65.5",db.query("SELECT value FROM atlas_facts").first().s("value"));assertEquals(0,db.facts(id).first().s("value").toBigDecimal().compareTo(java.math.BigDecimal("65500")))
         actions.single("atlas.rollbackPlugin",obj("pluginId" to "units.test"),confirmed=true);assertEquals(0,db.facts(id).first().s("value").toBigDecimal().compareTo(java.math.BigDecimal("65.5")))
     }
+    @Test fun additivePluginUpgradeKeepsHistoricalRecordAndPinnedPage(){
+        fun manifest(version:Int,title:String):JSONObject {
+            val metric=obj("key" to "count","title" to "观测数量","kind" to "SNAPSHOT","unit" to "个")
+            if(version>1) metric.put("fields",JSONArray().put(obj("id" to "detail","title" to "样本说明","type" to "text")))
+            return obj("id" to "observations.test","title" to "样本观察","version" to version,
+                "metrics" to JSONArray().put(metric),"views" to JSONArray().put(obj(
+                    "key" to "counts","title" to title,"metricKey" to "count","chart" to "line")))
+        }
+        actions.single("atlas.installPlugin",obj("manifest" to manifest(1,"观测趋势")),confirmed=true)
+        val metric=db.metrics().single().s("id")
+        val view=db.objects(all=true).single{it.s("type")=="VIEW"}.s("id")
+        actions.single("atlas.layout",obj("objectId" to view,"position" to 3))
+        actions.single("atlas.record",obj("metricId" to metric,"date" to "2026-09-12","value" to "8"))
+        val original=db.facts(metric).single().s("id")
+        val preview=actions.single("atlas.updatePlugin",obj("manifest" to manifest(2,"样本趋势")))
+        assertEquals("PREVIEW",preview.s("status"))
+        val impact=preview.getJSONObject("plan").getJSONArray("impact").getJSONObject(0)
+        assertEquals(1,impact.getInt("count"))
+        assertEquals("样本说明",impact.getJSONArray("addedFields").getString(0))
+        actions.execute(preview.getJSONObject("plan"),confirmed=true)
+        assertEquals("样本趋势",db.one("atlas_objects",view)!!.s("title"))
+        assertEquals(3,db.one("atlas_layout",view)!!.getInt("position"))
+        assertEquals("8",db.facts(metric).single().s("value"))
+        assertEquals(original,db.facts(metric).single().s("id"))
+        assertFalse(JSONObject(db.facts(metric).single().s("fields_json")).has("detail"))
+        db.undo()
+        assertEquals("观测趋势",db.one("atlas_objects",view)!!.s("title"))
+        assertEquals(3,db.one("atlas_layout",view)!!.getInt("position"))
+        assertEquals(original,db.facts(metric).single().s("id"))
+    }
     @Test fun financeTransferAndAnchorRules(){
         val balance=metric();val flows=metric("CHANGE","SUM");val other=metric("CHANGE","SUM")
         actions.single("atlas.record",obj("metricId" to balance,"value" to "1000","date" to "2026-11-02"));actions.single("atlas.record",obj("metricId" to flows,"value" to "999","date" to "2026-11-01"));actions.single("atlas.record",obj("metricId" to flows,"value" to "25","date" to "2026-11-03"))
