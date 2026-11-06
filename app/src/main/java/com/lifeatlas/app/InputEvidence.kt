@@ -15,6 +15,13 @@ internal class InputEvidence(input: String, private val today: LocalDate) {
     private val colloquialMoney = Regex("($numeral)块([0-9零〇一二两三四五六七八九])(?![0-9零〇一二两三四五六七八九])")
     private val datePattern = "(?:\\d{4}-\\d{2}-\\d{2}|今天|今日|昨晚|昨早|昨天|前天|今早|今晚|次日|明天)"
     private val dateMentions = Regex(datePattern).findAll(text).toList()
+    private val numericClock = Regex("(?<!\\d)([0-2]?\\d):([0-5]\\d)(?::([0-5]\\d))?")
+    private val spokenClock = Regex("(凌晨|早上|上午|中午|下午|傍晚|晚上)?([0-9零〇一二两三四五六七八九十]{1,3})点(?:($numeral)分|半)?(?![0-9零〇一二两三四五六七八九十百千万点.])")
+    private val quantityText = text.replace(numericClock, " ").replace(spokenClock, " ")
+        .replace(Regex(datePattern), " ").replace("一下", " ")
+    private val numbers = Regex("半|[+-]?$numeral").findAll(quantityText).mapNotNull { match ->
+        if (match.value == "半") BigDecimal("0.5") else number(match.value)
+    }.toList()
     private val hasNow = Regex("现在|刚刚|此刻").containsMatchIn(text)
     private data class Quantity(val value: BigDecimal, val unit: String)
     private data class Clock(val time: LocalTime, val date: LocalDate?)
@@ -35,11 +42,11 @@ internal class InputEvidence(input: String, private val today: LocalDate) {
     }
     private val clocks: List<Clock> = run {
         val matches = mutableListOf<Pair<Int, LocalTime>>()
-        for (match in Regex("(?<!\\d)([0-2]?\\d):([0-5]\\d)(?::([0-5]\\d))?").findAll(text)) {
+        for (match in numericClock.findAll(text)) {
             val hour = match.groupValues[1].toInt()
             if (hour <= 23) matches.add(match.range.first to LocalTime.of(hour, match.groupValues[2].toInt(), match.groupValues[3].toIntOrNull() ?: 0))
         }
-        for (match in Regex("(凌晨|早上|上午|中午|下午|傍晚|晚上)?([0-9零〇一二两三四五六七八九十]{1,3})点(?:($numeral)分|半)?").findAll(text)) {
+        for (match in spokenClock.findAll(text)) {
             val suffix = text.drop(match.range.last + 1).firstOrNull()
             if (suffix != null && (suffix.isDigit() || suffix in digits)) continue
             var hour = number(match.groupValues[2])?.toInt() ?: continue
@@ -72,25 +79,27 @@ internal class InputEvidence(input: String, private val today: LocalDate) {
                 "原句给出的数值是 ${stated.single().stripTrailingZeros().toPlainString()} $unit，请保留原句的数值"
             }
         }
-        val day = LocalDate.parse(args.getString("date"))
-        val dates = dateMentions.mapNotNull { date(it.value) }.distinct()
-        if (dates.size == 1) require(day == dates.single()) { "记录日期与原句不一致" }
-        if (clocks.isEmpty() && !hasNow) {
-            listOf("occurredAt", "startAt", "endAt").forEach(args::remove)
-            return
-        }
         val zone = ZoneId.of(args.s("zone").ifBlank { ZoneId.systemDefault().id })
         if (singleRecord && clocks.size == 2 && config.s("kind") == "ALLOCATION" &&
             (args.has("startAt") || args.has("endAt"))) {
             val first = clocks.first()
             val last = clocks.last()
-            val startDay = first.date ?: day
+            val startDay = first.date ?: LocalDate.parse(args.getString("date"))
             val endDay = last.date ?: if (last.time < first.time) startDay.plusDays(1) else startDay
             args.put("date", startDay.toString())
             args.put("startAt", instant(startDay, first.time, zone))
             args.put("endAt", instant(endDay, last.time, zone))
             args.remove("occurredAt")
             if (stated.isEmpty()) args.remove("value")
+            return
+        }
+        val value = args.s("value").toBigDecimalOrNull()
+        if (stated.isEmpty() && value != null) requireLiteralQuantity(value)
+        val day = LocalDate.parse(args.getString("date"))
+        val dates = dateMentions.mapNotNull { date(it.value) }.distinct()
+        if (dates.size == 1) require(day == dates.single()) { "记录日期与原句不一致" }
+        if (clocks.isEmpty() && !hasNow) {
+            listOf("occurredAt", "startAt", "endAt").forEach(args::remove)
         } else {
             for (key in listOf("occurredAt", "startAt", "endAt")) {
                 val value = args.s(key)
@@ -107,6 +116,17 @@ internal class InputEvidence(input: String, private val today: LocalDate) {
                     }
                 }
             }
+        }
+    }
+
+    fun requireEditQuantity(value: BigDecimal, unit: String) {
+        val stated = quantitiesFor(unit)
+        if (stated.none { it.abs().compareTo(value.abs()) == 0 }) requireLiteralQuantity(value)
+    }
+
+    private fun requireLiteralQuantity(value: BigDecimal) {
+        require(numbers.any { it.abs().compareTo(value.abs()) == 0 }) {
+            "原句没有这个数值。请使用已给出的起止时刻，或问清楚要记录或修改什么"
         }
     }
 
