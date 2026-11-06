@@ -54,7 +54,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}
     fun execute(plan:JSONObject,confirmed:Boolean=false)=work("正在保存"){
         val command=plan.copyJson().apply{if(s("rawInput").isEmpty())put("rawInput",draft)}
-        if(command.optBoolean("ai")) actions.validateProposedPlan(command)
+        if(command.optBoolean("ai") || command.optBoolean("review")) actions.validateProposedPlan(command)
         val fromChoice = command.optBoolean("fromChoice")
         command.remove("fromChoice")
         if (fromChoice && requiresReview(command)) {
@@ -101,17 +101,22 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
                 val text = state.value.imageText
                 val attached = state.value.image != null
                 require(!attached || text.isNotBlank()) { "图片未识别出文字，请换一张清晰图片" }
-                val offline = if (attached) null else Offline.plan(input, store)
-                when {
-                    offline == null -> planInput(input.ifBlank { "整理图片中的记录供我确认" },text,attached)
-                    offline.has("question") -> obj("message" to offline.s("question"),"question" to offline)
-                    else -> actions.execute(offline)
-                }
+                val offline = if (attached) OfflineReceipt.plan(text,input,store.metrics()) else Offline.plan(input, store)
+                if (offline==null) planInput(input.ifBlank { "整理图片中的记录供我确认" },text,attached)
+                else localResult(offline)
             }
             if (result.s("status") == "DONE") clearSubmittedDraft(input)
             result
         }
         job.invokeOnCompletion { submitting.set(false) }
+    }
+    private fun localResult(plan:JSONObject):JSONObject = when {
+        plan.has("question") -> obj("message" to plan.s("question"),"question" to plan)
+        plan.optBoolean("review") -> {
+            actions.validateProposedPlan(plan)
+            obj("status" to "PREVIEW","plan" to plan,"message" to "请核对后保存")
+        }
+        else -> actions.execute(plan)
     }
     fun clearPending() {update{if(it.pending==null)it else it.copy(pending=null,error="",status="已取消")}}
     fun undo(redo:Boolean=false)=work(if(redo) "正在恢复" else "正在撤销") {obj("message" to ((if(redo) "已恢复：" else "已撤销：")+store.undo(redo)))}
@@ -121,7 +126,8 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         val reading=ImageText.readDetailed(getApplication(),uri);val text=reading.text
         require(text.isNotBlank()){"未识别到清晰文字，请更换图片"}
         update{it.copy(imageText=text,imageLayout=reading.layout,status="正在整理图片记录")}
-        if(!settings.ai().configured)return@work obj("message" to "文字已识别，请配置 AI 后整理记录")
+        OfflineReceipt.plan(text,draft,store.metrics())?.let { return@work localResult(it) }
+        if(!settings.ai().configured)return@work obj("message" to "文字已识别，可展开原文核对；其他图片格式可用自选模型整理")
         planInput(draft.ifBlank{"识别图片中的实际记录，列出数值与发生日期，供我核对保存"},text,true)
     }
     fun editImageText(text:String){update{it.copy(imageText=text,imageLayout="[]")}}

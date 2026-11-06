@@ -63,7 +63,12 @@ fun readableColor(color:Color,background:Color,ratio:Double=4.5):Color {if(contr
     val color=if(selected)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Canvas(Modifier.size(23.dp)) {val stroke=androidx.compose.ui.graphics.drawscope.Stroke(1.8.dp.toPx(),cap=StrokeCap.Round,join=StrokeJoin.Round);val w=size.width;val h=size.height
         when(index) {
-            0->{val path=Path().apply{moveTo(w*.12f,h*.43f);lineTo(w*.5f,h*.1f);lineTo(w*.88f,h*.43f);lineTo(w*.88f,h*.87f);lineTo(w*.59f,h*.87f);lineTo(w*.59f,h*.62f);lineTo(w*.41f,h*.62f);lineTo(w*.41f,h*.87f);lineTo(w*.12f,h*.87f);close()};drawPath(path,color,style=stroke)}
+            0->{
+                drawRoundRect(color,Offset(w*.11f,h*.14f),Size(w*.78f,h*.72f),
+                    androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()),style=stroke)
+                drawLine(color,Offset(w*.29f,h*.4f),Offset(w*.72f,h*.4f),stroke.width,StrokeCap.Round)
+                drawLine(color,Offset(w*.29f,h*.6f),Offset(w*.53f,h*.6f),stroke.width,StrokeCap.Round)
+            }
             1->{for(x in 0..1)for(y in 0..1)drawRoundRect(color,Offset(w*(.12f+x*.43f),h*(.12f+y*.43f)),androidx.compose.ui.geometry.Size(w*.32f,h*.32f),androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()),style=stroke)}
             2->{drawLine(color,Offset(w*.24f,h*.15f),Offset(w*.24f,h*.85f),1.8.dp.toPx());for(y in listOf(.22f,.5f,.78f)){drawCircle(color,2.5.dp.toPx(),Offset(w*.24f,h*y));drawLine(color,Offset(w*.48f,h*y),Offset(w*.88f,h*y),1.8.dp.toPx())}}
             3->{val path=Path().apply{moveTo(w*.1f,h*.78f);lineTo(w*.35f,h*.52f);lineTo(w*.55f,h*.63f);lineTo(w*.9f,h*.2f)};drawPath(path,color,style=stroke)}

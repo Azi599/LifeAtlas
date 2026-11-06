@@ -47,7 +47,48 @@ class OfflineTest {
         assertNull(Offline.plan("昨天学习时间两公斤",listOf(study),today))
         assertNull(Offline.plan("学习时间两个小时吗？",listOf(study),today))
         assertNull(Offline.plan("学习和睡眠有没有关系",listOf(study,sleep),today))
-        assertNull(Offline.plan("改一下刚才那条",listOf(study),today))
+        assertTrue(Offline.plan("改一下刚才那条",listOf(study),today)!!.has("question"))
         assertEquals("history",args(Offline.plan("打开时间轴",emptyList(),today)!!).s("page"))
+    }
+    @Test fun independentFactsCommitTogetherAndUseTheStatedDay() {
+        val plan = Offline.plan("昨天晚饭花了18块5，另外学了半小时",listOf(meals,study,sleep),today)!!
+        val steps = plan.getJSONArray("steps").objects()
+        assertEquals(listOf("meals","study"),steps.map { it.getJSONObject("args").s("metricId") })
+        assertEquals(listOf("2026-11-05","2026-11-05"),steps.map { it.getJSONObject("args").s("date") })
+        assertNull(Offline.plan("昨天晚饭花了18块5，分析账户投资风险",listOf(meals),today))
+    }
+
+    @Test fun localEditResolvesTheRecordAndRequiresReview() {
+        val weight = metric("weight","晨间体重","kg","SNAPSHOT")
+        val plan = Offline.plan("把昨天的晨间体重改成130斤",listOf(weight),today,
+            records={ id, date ->
+                assertEquals("weight",id)
+                assertEquals("2026-11-05",date)
+                listOf(obj("id" to "fact-1","value" to "64","local_date" to date))
+            })!!
+        assertTrue(plan.optBoolean("review"))
+        assertEquals("fact-1",args(plan).s("id"))
+        assertEquals(0,args(plan).s("value").toBigDecimal().compareTo("65".toBigDecimal()))
+    }
+
+    @Test fun folderAndTimerUseConcreteTargets() {
+        val folder = Offline.plan("建个叫寒假计划的目录",emptyList(),today)!!
+        assertEquals("FOLDER",args(folder).s("type"))
+        assertEquals("寒假计划",args(folder).s("title"))
+        val start = Offline.plan("开始学习计时",listOf(study,sleep),today)!!
+        assertEquals("study",args(start).s("metricId"))
+        val stop = Offline.plan("结束计时",listOf(study),today,
+            timers={ listOf(obj("id" to "timer-1","metric_id" to "study","state" to "RUNNING")) })!!
+        assertEquals("timer-1",args(stop).s("timerId"))
+    }
+    @Test fun structuredReceiptKeepsExactAmountsAndIgnoresPrintedTotal() {
+        val source="支付明细\n2026-11-04\n12:15 午餐 28.60 元\n16:40 咖啡 12.30 元\n合计 40.90 元"
+        val plan=OfflineReceipt.plan(source,"",listOf(meals),java.time.ZoneId.of("Asia/Shanghai"))!!
+        val steps=plan.getJSONArray("steps").objects().map{it.getJSONObject("args")}
+        assertEquals(listOf("28.60","12.30"),steps.map{it.s("value")})
+        assertEquals(listOf("2026-11-04T04:15:00Z","2026-11-04T08:40:00Z"),steps.map{it.s("occurredAt")})
+        assertTrue(plan.optBoolean("review"))
+        assertNull(OfflineReceipt.plan(source.replace("午餐","退款"),"",listOf(meals)))
+        assertNull(OfflineReceipt.plan(source.replace("2026-11-04",""),"",listOf(meals)))
     }
 }

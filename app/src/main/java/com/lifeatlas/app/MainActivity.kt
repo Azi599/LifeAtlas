@@ -86,6 +86,7 @@ class MainActivity:ComponentActivity() {
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit,onImage:()->Unit) {
     val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
     var showImageText by remember{mutableStateOf(false)}
+    var spaceReturn by rememberSaveable{mutableStateOf("settings")}
     val command=state.draft;var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
     val listState=rememberLazyListState()
     LaunchedEffect(page,selected,state.historyOffset){listState.scrollToItem(0)}
@@ -108,11 +109,11 @@ class MainActivity:ComponentActivity() {
         spaceRows=rows.first;objectCache=objectCache+(rows.first+listOfNotNull(rows.second)).associateBy{it.s("id")}
     }
     val linked=storeRelations(vm,selected,state.revision)
-    fun open(id:String) {selected=id;spaceOffset=0;spaceSearch="";page="spaces";vm.settings.prefs.edit().putString("selected",id).apply()}
+    fun open(id:String) {if(page!="spaces") spaceReturn=page;selected=id;spaceOffset=0;spaceSearch="";page="spaces";vm.settings.prefs.edit().putString("selected",id).apply()}
     BackHandler(enabled=page!="workspace") {
         when {
             page=="spaces" && selected!=null -> selected=chosen?.s("parent_id")?.ifEmpty{null}
-            page=="spaces" -> page="settings"
+            page=="spaces" -> page=spaceReturn
             else -> {page="workspace";selected=null}
         }
     }
@@ -158,7 +159,7 @@ class MainActivity:ComponentActivity() {
                     state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                 }
                 "spaces" -> {
-                    item{ActionRow{if(selected!=null) TextButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")} else TextButton(onClick={page="settings"}){Text("返回我的")};TextButton(onClick={create=true}){Text("新建")};if(chosen!=null) TextButton(onClick={edit=chosen}){Text("管理")}}}
+                    item{ActionRow{if(selected!=null) TextButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")} else TextButton(onClick={page=spaceReturn}){Text("返回")};TextButton(onClick={create=true}){Text("新建")};if(chosen!=null) TextButton(onClick={edit=chosen}){Text("管理")}}}
                     item{TextButton(onClick={editingPage=null;pageBuilder=true}){Text("新建页面")};if(chosen?.s("type")=="VIEW" && JSONObject(chosen.s("config")).s("component")=="schema")TextButton(onClick={editingPage=chosen;pageBuilder=true}){Text("编辑页面")}}
                     if(chosen?.s("type")=="METRIC") {
                         item{MetricPanel(chosen,vm,state.revision,onRecord={record=chosen})}
@@ -188,7 +189,7 @@ class MainActivity:ComponentActivity() {
                 }
                 "settings" -> {
                     if(!settingsSubpage) item {
-                        OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理")}
+                        OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理")}
                     }
                     item{SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin,onSubpage={settingsSubpage=it})}
                     if(!settingsSubpage) {

@@ -79,9 +79,10 @@ class UiTest {
         rule.onAllNodesWithTag("timeline-item").onFirst().assertIsDisplayed()
         capture("timeline.png")
         rule.onNodeWithTag("tab-analytics").performClick()
-        rule.onNodeWithTag("atlas-list").performScrollToNode(hasTestTag("composition-pie"))
+        rule.waitUntil(10000){rule.onAllNodesWithTag("composition-pie").fetchSemanticsNodes().isNotEmpty()}
         rule.onNodeWithTag("composition-pie").performScrollTo().assertIsDisplayed()
         capture("analysis-pie.png")
+        rule.waitUntil(10000){rule.onAllNodesWithTag("trend-chart").fetchSemanticsNodes().isNotEmpty()}
         rule.onNodeWithTag("trend-chart").performScrollTo().assertIsDisplayed()
         capture("analysis-bars.png")
         rule.onNodeWithTag("tab-workspace").performClick()

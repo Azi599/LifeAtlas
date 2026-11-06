@@ -28,8 +28,14 @@ object Offline {
         "时间轴" to "history","记录" to "history","记录流" to "history","历史记录" to "history",
         "分析" to "analytics","统计" to "analytics","我的" to "settings","设置" to "settings","空间" to "spaces"
     )
+    private val createNamed = Regex("^(?:请|帮我)?(?:新建|创建|建个|开个)(?:一个|个)?(?:叫|名为)(.{1,80})的(项目|目录|文件夹)$")
+    private val createTyped = Regex("^(?:请|帮我)?(?:新建|创建)(?:一个|个)?(项目|目录|文件夹)[:：]?(.{1,80})$")
+    private val change = Regex("^(?:请|帮我)?把(.+?)(?:改成|改为|修改为|更正为)(.+)$")
+    private val remove = Regex("^(?:请|帮我)?删除(.+)$")
+    private val startTimer = Regex("^(?:请|帮我)?(?:开始(.+?)计时|给(.+?)开始计时)$")
+    private val timerAction = mapOf("暂停计时" to "time.pause","继续计时" to "time.resume","结束计时" to "time.stop","停止计时" to "time.stop")
     private val recordLead = Regex("^(?:请|帮我|给我)?(?:记录一下|记一笔|记一下|记下|记录|补记)")
-    private val dateLead = Regex("^(今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|\\d{4}-\\d{2}-\\d{2})")
+    private val dateLead = Regex("^(今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|刚才|刚刚|\\d{4}-\\d{2}-\\d{2})")
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
     private val rangeLead = Regex("^(最近[0-9]{1,2}天|近[0-9]{1,2}天|最近七天|近七天|本月|这个月|上月|上个月|今天|昨天|前天)")
     private val number = "半|[+-]?(?:[0-9]+(?:\\.[0-9]+)?|[零〇一二两三四五六七八九十百千万]+(?:点[零〇一二两三四五六七八九0-9]+)?)"
@@ -37,9 +43,17 @@ object Offline {
     private val cashTail = Regex("^(?:[:=]|是|为|了)?($number)块([0-9零〇一二两三四五六七八九])(?:钱)?$")
 
     fun plan(input: String, store: AtlasStore): JSONObject? =
-        plan(input,store.metrics(),LocalDate.now())
+        plan(input,store.metrics(),LocalDate.now(),
+            records={ metric, date -> store.timeline(metric,date,date,0).take(50) },
+            timers={ store.query("SELECT * FROM atlas_timers WHERE state != 'STOPPED' ORDER BY created_at DESC LIMIT 50") })
 
-    internal fun plan(input: String, metrics: List<JSONObject>, today: LocalDate): JSONObject? {
+    internal fun plan(
+        input: String,
+        metrics: List<JSONObject>,
+        today: LocalDate,
+        records: (String,String)->List<JSONObject> = { _,_ -> emptyList() },
+        timers: ()->List<JSONObject> = { emptyList() }
+    ): JSONObject? {
         val text = Normalizer.normalize(input.trim(),Normalizer.Form.NFKC).trimEnd('。','!','！').trim()
         if (text.isEmpty()) return null
         if (text.startsWith("/")) return legacy(text,metrics,today)
@@ -47,8 +61,88 @@ object Offline {
         val request = text.removeSuffix("?")
         val pageName = request.replaceFirst(Regex("^(?:请|帮我)?(?:打开|切换到|切到|进入|去|看看)"),"").removeSuffix("页").trim()
         pages[pageName]?.let { return command(input,"atlas.navigate",obj("page" to it)) }
-        Regex("^(?:记条文字|记录文字|记一条文字)[:：]\\s*(.+)$").matchEntire(request)?.let {
+        Regex("^(?:记条文字|记录文字|记一条文字)[:：]\\s*(.+)$").matchEntire(input.trim())?.let {
             return command(input,"atlas.createEvent",obj("text" to it.groupValues[1],"date" to today.toString()))
+        }
+        if (request.replace(",","") in setOf("帮我改一下刚才那条","刚才那条帮我改一下","改一下刚才那条","修改刚才那条")) {
+            return question(input,"你想把刚才那条记录改成什么？")
+        }
+        val actions = request.split(Regex("[,，;；]")).map(String::trim)
+        if (actions.size in 2..6 && actions.none { it.isBlank() }) {
+            val sharedDate = dateLead.find(actions.first().replaceFirst(recordLead,""))?.value
+            val steps = actions.mapIndexed { index, part ->
+                val phrase = part.removePrefix("另外").removePrefix("还").trim()
+                val addedDate = if (index>0 && sharedDate!=null && (part.startsWith("另外") || part.startsWith("还")) &&
+                    dateLead.find(phrase.replaceFirst(recordLead,""))==null) sharedDate else ""
+                val step = plan(addedDate+phrase,metrics,today)?.optJSONArray("steps")?.optJSONObject(0) ?: return null
+                if (step.s("actionId")!="atlas.record") return null
+                step.put("stepId","s${index+1}")
+            }
+            return command(input,"atlas.record",JSONObject()).put("steps",JSONArray(steps))
+        }
+        val named = createNamed.matchEntire(request)
+        val typed = createTyped.matchEntire(request)
+        if (named!=null || typed!=null) {
+            val title = (named?.groupValues?.get(1) ?: typed!!.groupValues[2]).trim().trim('"','“','”','「','」')
+            val type = named?.groupValues?.get(2) ?: typed!!.groupValues[1]
+            if (title.isBlank()) return null
+            return command(input,"atlas.createObject",obj("type" to if(type=="项目") "PROJECT" else "FOLDER","title" to title))
+        }
+        val editing = change.matchEntire(request)
+        val deleting = remove.matchEntire(request)
+        if (editing!=null || deleting!=null) {
+            val rawSubject = (editing ?: deleting!!).groupValues[1]
+            val recent = rawSubject.startsWith("最近一条")
+            val subject = rawSubject.removePrefix("最近一条")
+            val matchDate = dateLead.find(subject)?.value
+            if (!recent && matchDate==null) return question(input,"要${if(editing!=null) "修改" else "删除"}哪一天的记录？")
+            val day = matchDate?.let { parseDate(it,today)?.toString() ?: return null }.orEmpty()
+            val name = subject.drop(matchDate?.length ?: 0).removePrefix("的").removeSuffix("记录")
+            val targets = namedMetrics(name,metrics)
+            if (targets.isEmpty()) return null
+            val quantity = if (editing==null) null else parseQuantity(compact(editing.groupValues[2])) ?: return null
+            val options = targets.flatMap { metric ->
+                val config = JSONObject(metric.s("config"))
+                if (quantity!=null && config.has("expression")) return@flatMap emptyList()
+                val unit = config.s("unit")
+                val value = quantity?.let {
+                    runCatching { Units.convert(it.value,it.unit.ifBlank{unit},unit) }.getOrNull() ?: return@flatMap emptyList()
+                }
+                val rows = records(metric.s("id"),day).let { if(recent) it.take(1) else it }
+                rows.map { row ->
+                    val args = obj("id" to row.s("id"))
+                    if (value!=null) args.put("value",value.toPlainString())
+                    val action = if(editing!=null) "atlas.editRecord" else "atlas.deleteRecord"
+                    obj("title" to listOf(metric.s("title"),row.s("local_date"),row.s("value","未填写"),
+                        row.s("occurred_at").ifBlank{row.s("start_at")}.takeIf{it.isNotBlank()}?.let{formatInstant(it,row.s("zone"))}.orEmpty()
+                    ).filter{it.isNotBlank()}.joinToString(" · "), "plan" to command(input,action,args).put("review",true))
+                }
+            }
+            if (options.isEmpty()) return question(input,"没有找到符合条件的记录")
+            if (options.size==1) return options.single().getJSONObject("plan")
+            return question(input,"选择要${if(editing!=null) "修改" else "删除"}的记录",options)
+        }
+        startTimer.matchEntire(request)?.let { match ->
+            val name = match.groupValues[1].ifBlank { match.groupValues[2] }
+            val targets = namedMetrics(name,metrics).filter { JSONObject(it.s("config")).s("kind")=="ALLOCATION" }
+            if (targets.isEmpty()) return null
+            val active = timers().map { it.s("metric_id") }.toSet()
+            val choices = targets.filter { it.s("id") !in active }
+            if (choices.isEmpty()) return question(input,"这项活动已有计时")
+            return choose(input,"为哪项活动计时？",choices.map { it to command(input,"time.start",obj("metricId" to it.s("id"))) })
+        }
+        timerAction[request]?.let { action ->
+            val active = timers().filter { timer -> when(action) {
+                "time.pause" -> timer.s("state")=="RUNNING"
+                "time.resume" -> timer.s("state")=="PAUSED"
+                else -> true
+            } }
+            val options = active.map { timer ->
+                obj("title" to (metrics.firstOrNull { it.s("id")==timer.s("metric_id") }?.s("title") ?: "计时"),
+                    "plan" to command(input,action,obj("timerId" to timer.s("id"))))
+            }
+            if(options.isEmpty()) return question(input,"当前没有可操作的计时")
+            return if (options.size==1) options.single().getJSONObject("plan") else question(input,"选择计时",options)
         }
         statisticLead.find(request)?.let { lead ->
             val body = request.drop(lead.value.length).trim()
@@ -57,8 +151,7 @@ object Offline {
             val subject = body.drop(range?.value?.length ?: 0).removePrefix("的").trim()
             val suffix = listOf("的平均值","平均值","的总计","总计","的合计","合计","的统计","统计","的记录","记录").firstOrNull { subject.endsWith(it) }
             val name = if (suffix==null) subject else subject.removeSuffix(suffix)
-            val exact = metrics.filter { compact(it.s("title"))==compact(name) }
-            val matching = exact.ifEmpty { metrics.filter { metric -> vocabulary.any { compact(name) in it.words && matches(metric,it) } } }
+            val matching = namedMetrics(name,metrics)
             if (matching.isEmpty()) return null
             val method = when {
                 suffix?.contains("平均")==true -> "MEAN"
@@ -105,10 +198,19 @@ object Offline {
     private fun choose(input:String,question:String,options:List<Pair<JSONObject,JSONObject>>):JSONObject? {
         if (options.isEmpty()) return null
         if (options.size==1) return options.single().second
-        return obj("question" to question,"rawInput" to input,"options" to JSONArray(options.take(8).map { (metric,plan) ->
+        return question(input,question,options.map { (metric,plan) ->
             val duplicate = options.count { it.first.s("title")==metric.s("title") }>1
             obj("title" to (metric.s("title")+if(duplicate) " · "+metric.s("id").take(6) else ""),"plan" to plan)
-        }))
+        })
+    }
+
+    private fun question(input:String,title:String,options:List<JSONObject> = emptyList()) =
+        obj("question" to title,"rawInput" to input,"options" to JSONArray(options.take(8)))
+
+    private fun namedMetrics(title:String,metrics:List<JSONObject>):List<JSONObject> {
+        val name = compact(title)
+        val exact = metrics.filter { compact(it.s("title"))==name }
+        return exact.ifEmpty { metrics.filter { metric -> vocabulary.any { name in it.words && matches(metric,it) } } }
     }
 
     private fun command(input:String,id:String,args:JSONObject) =
@@ -139,7 +241,7 @@ object Offline {
 
     private fun compact(text:String) = text.filterNot(Char::isWhitespace)
     private fun parseDate(value:String,today:LocalDate):LocalDate? = when(value) {
-        "今天","今日","今早","今晚" -> today
+        "今天","今日","今早","今晚","刚才","刚刚" -> today
         "昨天","昨日","昨早","昨晚" -> today.minusDays(1)
         "前天" -> today.minusDays(2)
         else -> runCatching { LocalDate.parse(value) }.getOrNull()
