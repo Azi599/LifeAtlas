@@ -21,4 +21,9 @@ class MathEngineTest {
     @Test fun constantChartHasDistinctTicksAndCentredPoint(){val scale=chartScale(listOf(250.0));assertEquals(3,scale.ticks.distinct().size);assertTrue(scale.minimum<250 && scale.maximum>250)}
     @Test fun narrowLargeChartUsesAnExplicitOffset(){val scale=chartScale(listOf(1000000000000.0,1000000000001.0));assertEquals(1000000000000.0,scale.offset,0.0);assertEquals(listOf("0","0.5","1"),scale.ticks)}
 
+    @Test(expected=IllegalArgumentException::class) fun metricCannotSilentlyDropMalformedFields() {
+        validateMetric(obj("kind" to "CHANGE", "unit" to "只",
+            "fields" to obj("bird" to obj("type" to "text", "title" to "鸟名"))))
+    }
+
 }

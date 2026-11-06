@@ -25,6 +25,9 @@ fun validateMetric(config:JSONObject) {
     val method=config.s("aggregate",if(config.s("kind")=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")
     require(method in aggregateMethods) { "不支持的统计规则：$method" }
     require(config.s("unit").length<=30) { "单位过长" }
+    require(config.isNull("fields") || config.optJSONArray("fields") != null) {
+        "自定义字段请按数组提供，每项包含 id、title 和 type"
+    }
     val fields=config.optJSONArray("fields") ?: JSONArray()
     require(fields.length()<=40) { "字段超过40个" }
     val ids=HashSet<String>()

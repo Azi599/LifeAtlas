@@ -34,7 +34,9 @@ class Planner(private val actions: Actions) {
             用户说了几件独立的事就分别列步骤。只做他要求的事，使用现有对象；缺少时才创建最小定义。
             新增事实用 atlas.record。只有用户明确要求更正时才用 atlas.editRecord。修改先用 atlas.query 找到真实记录 id，直接使用返回的 r 代号。改成什么不清楚就追问。
             未知时刻留空。时段的 startAt 是开始，endAt 是结束，可用 HH:mm 或含时区的 ISO 时刻。使用原句数值与单位，宿主换算。
-            报告用现有指标的 atlas.report，不生成额外指标或假记录。新功能包先预览。
+            报告用现有指标的 atlas.report，不生成额外指标或假记录。
+            新需求同时需要自定义字段、录入、历史或趋势时，返回一个 atlas.installPlugin 步骤，宿主预览并生成页面。
+            指标的值就是主数值，额外字段才放进 fields 数组。只定义用户要求的字段和组件。
             JSON 形状示例：
             {"title":"记一笔","steps":[{"stepId":"s1","actionId":"atlas.record","args":{"metricId":"已有指标代号","value":"250","unit":"毫升","date":"${today.minusDays(1)}"}}]}
             {"title":"新建空项目","steps":[{"stepId":"s1","actionId":"atlas.createObject","args":{"type":"PROJECT","title":"项目名称"}}]}
@@ -45,12 +47,15 @@ class Planner(private val actions: Actions) {
             atlas.record: metricId,date,value?,unit?,occurredAt?,startAt?,endAt?,zone?,fields?（对象）,eventId?。
             atlas.editRecord: id,value?,date?,fields?（对象）,occurredAt?,startAt?,endAt?,clearTime?。
             atlas.createObject: type,title,parentId?,config?。指标 config={kind,unit,aggregate,role?,fields?}。
-            kind 为 SNAPSHOT/CHANGE/ALLOCATION，字段类型 text/decimal/date/boolean/choice。记录类型只在内部使用。
+            kind 为 SNAPSHOT/CHANGE/ALLOCATION，记录类型只在内部使用。
+            字段用数组，例如 [{"id":"location","title":"地点","type":"text"},{"id":"completed","title":"完成","type":"boolean"}]。
+            字段类型 text/decimal/date/boolean/choice，id 用英文字母开头，title 显示原名称。
             atlas.query/atlas.aggregate: metricId,from?,to?,limit?；日期用 YYYY-MM-DD。aggregate 指定起止日期和 method?。
             atlas.report: title,metrics（指标 id 数组）,from,to（YYYY-MM-DD）。atlas.navigate: page（workspace/spaces/history/analytics/settings）。
             atlas.createView: title,components（引用真实指标的表单、历史或图表）。财务 role 使用 income/expense/balance/accountChange。
             atlas.setAppearance: mode（light/dark/system）,compact?,themeId?。atlas.searchObjects: keyword,type?。
-            atlas.installPlugin: manifest={id（字母开头）,title,version（整数）,metrics:[{key,title,kind,unit,aggregate,fields?}],screens:[{title,components:[{component:form/history/chart/summary/text/navigation,metricKey?,chart?}]}]}。
+            atlas.installPlugin: args 内放 manifest。示例结构：
+            {"id":"feature.sample","title":"项目名称","version":1,"metrics":[{"key":"quantity","title":"指标名称","kind":"CHANGE","unit":"次","aggregate":"SUM","fields":[{"id":"label","title":"名称","type":"text"}]}],"screens":[{"title":"记录与趋势","components":[{"component":"form","metricKey":"quantity"},{"component":"history","metricKey":"quantity"},{"component":"chart","metricKey":"quantity","chart":"line"}]}]}
             需要其他操作时查询 atlas.capabilities。原生能力走 atlas.requestBuild，外部构建步骤使用 atomic=false。
             界面使用中文实际名称和数据，去掉功能介绍与底层术语。
         """.trimIndent() + if (context.has("imageText")) """
