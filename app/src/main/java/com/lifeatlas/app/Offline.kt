@@ -49,13 +49,18 @@ object Offline {
     private val namedTimer = Regex("^(暂停|继续|结束|停止)(?:刚才的)?(.+?)(?:计时)?(?:[,，]告诉我实际有效时长)?$")
     private val timerAction = mapOf("暂停计时" to "time.pause","继续计时" to "time.resume","结束计时" to "time.stop","停止计时" to "time.stop")
     private val recordLead = Regex("^(?:请|帮我|给我)?(?:记录一下|记一笔|记一下|记下|记录|补记)")
-    private val dateWord = "今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|刚才|刚刚|\\d{4}-\\d{2}-\\d{2}"
+    private val dateWord = "今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|刚才|刚刚|今儿|上周[一二三四五六日天]|(?:\\d{4}年)?\\d{1,2}月\\d{1,2}日|\\d{4}-\\d{2}-\\d{2}"
     private val dateLead = Regex("^($dateWord)")
     private val meridiem = "凌晨|早上|上午|中午|下午|傍晚|晚上"
     private val clockNumber = "[0-9零〇一二两三四五六七八九十]{1,3}"
     private val clock = Regex("($meridiem)?($clockNumber)(?:[:：]([0-5]\\d)|点(?:(半)|($clockNumber)分)?)")
     private val intervalClock = "(?:(?:$meridiem)?$clockNumber(?:[:：][0-5]\\d|点(?:半|${clockNumber}分)?))"
     private val interval = Regex("^(?:从)?($intervalClock)(?:到|至|—|~)(?:($dateWord))?($intervalClock)(.+)$")
+    private val sleepRange = Regex("^($intervalClock)(?:睡到|睡至)(?:($dateWord))?($intervalClock)$")
+    private val namedRange = Regex("^($dateWord)($intervalClock)开始(.+?)[,，]($dateWord)($intervalClock)结束$")
+    private val listing = Regex("^把($dateWord)(?:的)?(?:所有)?(.+?)记录列出来(?:让我核对)?$")
+    private val weightedMark = Regex("(\\d+)次([+-]?\\d+(?:\\.\\d+)?)分")
+    private val weightedTotal = Regex("^假设有(\\d+)次")
     private val statisticLead = Regex("^(?:请|帮我)?(查看|看一下|查一下|查询|统计|汇总|查)")
     private val rangeLead = Regex("^(最近[0-9]{1,2}天|近[0-9]{1,2}天|最近七天|近七天|本月|这个月|上月|上个月|今天|昨天|前天)")
     private val number = "半|[+-]?(?:[0-9]+(?:\\.[0-9]+)?|[零〇一二两三四五六七八九十百千万]+(?:点[零〇一二两三四五六七八九0-9]+)?)"
@@ -90,10 +95,35 @@ object Offline {
         }
         if (text.endsWith("?") && statisticLead.find(text)==null) return null
         val request = text.removeSuffix("?").replaceFirst(Regex("^我(?=今天|昨天|今早|今晚)"),"")
+            .replace(Regex("(?:[,，](?:但忘了几点|没有具体开始时间))$"),"")
         val pageName = request.replaceFirst(Regex("^(?:请|帮我)?(?:打开|切换到|切到|进入|去|看看)"),"").removeSuffix("页").trim()
         pages[pageName]?.let { return command(input,"atlas.navigate",obj("page" to it)) }
         if (request.replace(",","") in setOf("帮我改一下刚才那条","刚才那条帮我改一下","改一下刚才那条","修改刚才那条")) {
             return question(input,"你想把刚才那条记录改成什么？")
+        }
+        val history = when {
+            request.matches(Regex("^撤销(?:刚才(?:对[^,，]+的)?修改|刚才的操作)?$")) -> "undo"
+            request.matches(Regex("^重做(?:刚才撤销的修改|刚才的操作)?$")) -> "redo"
+            request.matches(Regex("^恢复刚才删掉的[^,，]+$")) -> "undo-delete"
+            else -> null
+        }
+        if(history!=null) return obj("localHistory" to history,
+            "expectedChange" to if(history=="undo-delete") "delete" else if(request.contains("修改")) "edit" else "",
+            "targetHint" to Regex("对(.+?)的修改").find(request)?.groupValues?.get(1)
+                ?.replace(Regex("(?:金额|数值|日期|时间)$"),"").orEmpty(),
+            "rawInput" to input)
+        if(request.contains("候选") && request.contains("别直接写")) {
+            val amount=Regex("(?i)([0-9]+(?:\\.[0-9]+)?)\\s*kuai\\b").find(request)?.groupValues?.get(1)
+            if(amount!=null) {
+                val targets=metrics.filter { metric ->
+                    val config=JSONObject(metric.s("config"))
+                    config.s("role")=="expense" && Units.currency(config.s("unit"))=="CNY" && acceptsScalar(config)
+                }
+                val options=targets.map { metric -> obj("title" to metric.s("title"),"plan" to command(input,
+                    "atlas.record",obj("metricId" to metric.s("id"),"value" to amount,"unit" to "元","date" to today.toString()))
+                    .put("review",true)) }
+                return question(input,"识别到 $amount 元，请选择归属",options)
+            }
         }
         createAfterType.matchEntire(request)?.let { match ->
             val (type,title) = match.destructured
@@ -102,6 +132,8 @@ object Offline {
         createInside.matchEntire(request)?.let { match ->
             val (parentName,type,tail) = match.destructured
             val titleMatches = quotedTitle.findAll(tail).map { it.groupValues[1].trim() }.toList()
+            val remainder = quotedTitle.replace(tail,"").trim()
+            if(!remainder.matches(Regex("^(?:和|与|、|[,，])*(?:[0-9一二两三四五六七八九十]+个)?(?:子目录|目录|项目)?$"))) return null
             if(titleMatches.isEmpty() || titleMatches.any { it.isBlank() } || titleMatches.size>8) return null
             val parent = findSpace(parentName,spaces()) ?: return question(input,"请确认上级目录")
             val steps = titleMatches.mapIndexed { index,title ->
@@ -149,6 +181,31 @@ object Offline {
             if(options.isEmpty()) return question(input,"当前没有可操作的计时")
             return if (options.size==1) options.single().getJSONObject("plan") else question(input,"选择计时",options)
         }
+        listing.matchEntire(request)?.let { match ->
+            val (date,title)=match.destructured
+            val day=parseDate(date,today)?.toString() ?: return null
+            return choose(input,"查哪个指标？",namedMetrics(title,metrics).map { metric ->
+                metric to command(input,"atlas.query",obj("metricId" to metric.s("id"),"from" to day,"to" to day,"limit" to 100))
+            })
+        }
+        if (request.contains("平均") && request.contains("不要记入数据库")) {
+            weightedTotal.find(request)?.let { total ->
+                val expected=total.groupValues[1].toLongOrNull() ?: return null
+                val weights=weightedMark.findAll(request).map { match ->
+                    match.groupValues[2].toBigDecimal() to match.groupValues[1].toBigDecimal()
+                }.toList()
+                val actual=MathEngine.sum(weights.map{it.second})
+                if(weights.isEmpty() || actual.compareTo(expected.toBigDecimal())!=0 || expected==0L) {
+                    return question(input,"次数合计与题目不一致，请核对")
+                }
+                val result=MathEngine.weighted(weights)?.stripTrailingZeros()?.toPlainString() ?: return null
+                return obj("localAnswer" to "平均分 $result 分（共 $expected 次）")
+            }
+        }
+        namedRange.matchEntire(compact(request))?.let { match ->
+            val (day,from,title,endDay,to)=match.destructured
+            return intervalPlan(input,metrics,today,parseDate(day,today) ?: return null,"",from,endDay,to,title)
+        }
         val actions = request.split(Regex("[,，;；]")).map(String::trim)
         if (actions.size in 2..6 && actions.none { it.isBlank() }) {
             val sharedDate = dateLead.find(actions.first().replaceFirst(recordLead,""))?.value
@@ -177,11 +234,14 @@ object Offline {
             val recent = rawSubject.startsWith("最近一条")
             val subject = rawSubject.removePrefix("最近一条")
             val matchDate = dateLead.find(subject)?.value
-            if (!recent && matchDate==null) return question(input,"要${if(editing!=null) "修改" else "删除"}哪一天的记录？")
             val day = matchDate?.let { parseDate(it,today)?.toString() ?: return null }.orEmpty()
-            val name = subject.drop(matchDate?.length ?: 0).removePrefix("的").removeSuffix("记录")
-            val targets = namedMetrics(name,metrics)
+            val name = unquote(subject.drop(matchDate?.length ?: 0).removePrefix("的").removeSuffix("记录"))
+            val reference = vocabulary.flatMap { it.words }.sortedByDescending { it.length }.firstNotNullOfOrNull { word ->
+                if(name.startsWith(word)) parseQuantity(compact(name.drop(word.length)))?.let{word to it} else null
+            }
+            val targets = namedMetrics(reference?.first ?: name,metrics)
             if (targets.isEmpty()) return null
+            if (!recent && matchDate==null) return question(input,"要${if(editing!=null) "修改" else "删除"}哪一天的记录？")
             val quantity = if (editing==null) null else parseQuantity(compact(editing.groupValues[2])) ?: return null
             val options = targets.flatMap { metric ->
                 val config = JSONObject(metric.s("config"))
@@ -190,7 +250,15 @@ object Offline {
                 val value = quantity?.let {
                     runCatching { Units.convert(it.value,it.unit.ifBlank{unit},unit) }.getOrNull() ?: return@flatMap emptyList()
                 }
-                val rows = records(metric.s("id"),day).let { if(recent) it.take(1) else it }
+                val rows = records(metric.s("id"),day).filter { row ->
+                    if(reference==null) true else {
+                        val before = reference.second
+                        val oldValue = row.s("value").toBigDecimalOrNull()
+                        val wanted = runCatching { Units.convert(before.value,before.unit.ifBlank{unit},unit) }.getOrNull()
+                        wanted!=null && oldValue!=null && if(config.s("role")=="expense")
+                            oldValue.abs().compareTo(wanted.abs())==0 else oldValue.compareTo(wanted)==0
+                    }
+                }.let { if(recent) it.take(1) else it }
                 rows.map { row ->
                     val args = obj("id" to row.s("id"))
                     if (value!=null) args.put("value",value.toPlainString())
@@ -232,24 +300,13 @@ object Offline {
         body = body.drop(date?.value?.length ?: 0).replaceFirst(recordLead,"").trimStart(':',',','，')
         purchase.matchEntire(body)?.let { match -> body = "花了"+match.groupValues[1] }
         val dayPart = if(date?.value in setOf("昨晚","今晚")) "晚上" else ""
+        sleepRange.matchEntire(body)?.let { match ->
+            val (from,endDay,to)=match.destructured
+            return intervalPlan(input,metrics,today,day,dayPart,from,endDay,to,"睡眠")
+        }
         interval.matchEntire(body)?.let { match ->
-            val (fromText,endDayText,toText,title) = match.destructured
-            val startTime = localClock(fromText,dayPart) ?: return null
-            val endTime = localClock(toText,if(endDayText in setOf("昨晚","今晚")) "晚上" else "") ?: return null
-            val endDay = if (endDayText.isNotEmpty()) parseDate(endDayText,today) ?: return null
-                else if (endTime<startTime) day.plusDays(1) else day
-            val zone = ZoneId.systemDefault()
-            val startAt = instant(day,startTime,zone) ?: return null
-            val endAt = instant(endDay,endTime,zone) ?: return null
-            if (endAt<startAt) return null
-            val targets = namedMetrics(title,metrics).filter { metric ->
-                val config = JSONObject(metric.s("config"))
-                config.s("kind")=="ALLOCATION" && acceptsScalar(config)
-            }
-            return choose(input,"记到哪个指标？",targets.map { metric ->
-                metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),
-                    "date" to day.toString(),"zone" to zone.id,"startAt" to startAt.toString(),"endAt" to endAt.toString()))
-            })
+            val (from,endDay,to,title)=match.destructured
+            return intervalPlan(input,metrics,today,day,dayPart,from,endDay,to,title)
         }
         val startClock = clock.find(body)?.takeIf { it.range.first==0 }
         val occurredAt = startClock?.let {
@@ -323,6 +380,29 @@ object Offline {
             (Units.dimension(words.unit)!=null && Units.dimension(unit)==Units.dimension(words.unit))
     }
 
+    private fun intervalPlan(input:String,metrics:List<JSONObject>,today:LocalDate,day:LocalDate,
+        dayPart:String,fromText:String,endDayText:String,toText:String,title:String):JSONObject? {
+        val startTime = localClock(fromText,dayPart) ?: return null
+        val endTime = localClock(toText,if(endDayText in setOf("昨晚","今晚")) "晚上" else "") ?: return null
+        val endDay = if (endDayText.isNotEmpty()) parseDate(endDayText,today) ?: return null
+            else if (endTime<startTime) day.plusDays(1) else day
+        val zone = ZoneId.systemDefault()
+        val startAt = instant(day,startTime,zone) ?: return null
+        val endAt = instant(endDay,endTime,zone) ?: return null
+        if (endAt<startAt) return null
+        val name = unquote(title)
+        val targets = namedMetrics(name,metrics).ifEmpty {
+            namedMetrics(name.replaceFirst(Regex("^(?:复习了|学习了|读了|练习了|做了)"),""),metrics)
+        }.filter { metric ->
+            val config = JSONObject(metric.s("config"))
+            config.s("kind")=="ALLOCATION" && acceptsScalar(config)
+        }
+        return choose(input,"记到哪个指标？",targets.map { metric ->
+            metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),
+                "date" to day.toString(),"zone" to zone.id,"startAt" to startAt.toString(),"endAt" to endAt.toString()))
+        })
+    }
+
     private fun acceptsScalar(config:JSONObject):Boolean =
         !config.has("expression") && config.optJSONArray("fields")?.objects()?.none{it.optBoolean("required")}!=false
 
@@ -378,10 +458,22 @@ object Offline {
 
     private fun compact(text:String) = text.filterNot(Char::isWhitespace)
     private fun parseDate(value:String,today:LocalDate):LocalDate? = when(value) {
-        "今天","今日","今早","今晚","刚才","刚刚" -> today
+        "今天","今日","今早","今晚","刚才","刚刚","今儿" -> today
         "昨天","昨日","昨早","昨晚" -> today.minusDays(1)
         "前天" -> today.minusDays(2)
-        else -> runCatching { LocalDate.parse(value) }.getOrNull()
+        else -> {
+            if(value.startsWith("上周")) {
+                val day=when(value.last()){'日','天'->7;else->InputEvidence.number(value.takeLast(1))?.toInt()}
+                day?.let{today.minusDays(today.dayOfWeek.value.toLong()-1+7).plusDays(it.toLong()-1)}
+            } else {
+                val date=Regex("^(?:(\\d{4})年)?(\\d{1,2})月(\\d{1,2})日$").matchEntire(value)
+                runCatching {
+                    if(date==null) LocalDate.parse(value)
+                    else LocalDate.of(date.groupValues[1].toIntOrNull() ?: today.year,
+                        date.groupValues[2].toInt(),date.groupValues[3].toInt())
+                }.getOrNull()
+            }
+        }
     }
     private fun dateRange(value:String,today:LocalDate):Pair<LocalDate,LocalDate>? = when(value) {
         "" -> LocalDate.of(1,1,1) to today

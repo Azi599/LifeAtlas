@@ -104,9 +104,27 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
             db.setTransactionSuccessful();return result
         } finally {journal=null;db.endTransaction()}
     }
-    @Synchronized fun undo(redo:Boolean=false):String {
+    @Synchronized fun undo(redo:Boolean=false,expectedChange:String="",targetHint:String=""):String {
         val op=query("SELECT * FROM atlas_operations WHERE undone=? AND patches!='[]' ORDER BY created_at ${if(redo) "ASC" else "DESC"} LIMIT 1",arrayOf(if(redo) "1" else "0")).firstOrNull() ?: error(if(redo) "没有可恢复操作" else "没有可撤销操作")
-        val changes=JSONArray(op.s("patches")).objects().let{if(redo) it else it.reversed()};val db=writableDatabase;db.beginTransaction()
+        val patches=JSONArray(op.s("patches")).objects()
+        if(expectedChange.isNotBlank()) {
+            val records = patches.filter { it.s("table")=="atlas_facts" }
+            require(records.isNotEmpty() && (expectedChange!="edit" || records.size==1) &&
+                (targetHint.isBlank() || op.s("title").contains(targetHint)) &&
+                patches.all{it.s("table") in setOf("atlas_facts","atlas_fields")} &&
+                records.all { patch ->
+                    val before=patch.optJSONObject("before") ?: return@all false
+                    val after=patch.optJSONObject("after") ?: return@all false
+                    when(expectedChange) {
+                        "delete" -> before.optInt("deleted")==0 && after.optInt("deleted")==1
+                        "edit" -> before.optInt("deleted")==0 && after.optInt("deleted")==0 &&
+                            before.optLong("revision")!=after.optLong("revision")
+                        else -> false
+                    }
+                }) {"最近的操作与这条撤销请求不一致"}
+        }
+        val changes=if(redo) patches else patches.reversed()
+        val db=writableDatabase;db.beginTransaction()
         try { changes.forEach {p->val table=p.getString("table");require(table in tables);val target=p.optJSONObject(if(redo) "after" else "before");restore(table,p.getString("id"),target)};db.execSQL("UPDATE atlas_operations SET undone=? WHERE id=?",arrayOf(if(redo) 0 else 1,op.getString("id")));db.setTransactionSuccessful() } finally {db.endTransaction()};return op.s("title")
     }
     fun facts(metric:String?=null,from:String="0001-01-01",to:String="9999-12-31",offset:Int=0,limit:Int=50,includeDeleted:Boolean=false):List<JSONObject> {

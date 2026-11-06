@@ -85,7 +85,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         }
     }
     private fun requiresReview(plan: JSONObject): Boolean =
-        plan.optBoolean("imageImport") || (plan.optJSONArray("steps") ?: JSONArray()).objects().any { step ->
+        plan.optBoolean("imageImport") || plan.optBoolean("review") || (plan.optJSONArray("steps") ?: JSONArray()).objects().any { step ->
             val action = step.s("actionId")
             PlanReview.metricChoices(step).isNotEmpty() || action in setOf("atlas.editRecord", "atlas.deleteRecord", "atlas.restoreRecord", "atlas.deleteObject") ||
                 (action == "atlas.createObject" && step.optJSONObject("args")?.s("type") == "METRIC")
@@ -112,6 +112,12 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     }
     private fun localResult(plan:JSONObject):JSONObject = when {
         plan.has("question") -> obj("message" to plan.s("question"),"question" to plan)
+        plan.has("localAnswer") -> obj("status" to "DONE","message" to plan.s("localAnswer"))
+        plan.has("localHistory") -> {
+            val redo=plan.s("localHistory")=="redo"
+            val title=store.undo(redo,plan.s("expectedChange"),plan.s("targetHint"))
+            obj("status" to "DONE","message" to (if(redo) "已重做：" else "已撤销：")+title)
+        }
         plan.optBoolean("review") -> {
             actions.validateProposedPlan(plan)
             obj("status" to "PREVIEW","plan" to plan,"message" to "请核对后保存")

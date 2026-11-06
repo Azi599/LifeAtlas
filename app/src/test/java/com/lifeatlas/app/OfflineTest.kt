@@ -110,4 +110,24 @@ class OfflineTest {
         assertEquals("5400",mixed.s("value"))
         assertEquals("秒",mixed.s("unit"))
     }
+    @Test fun unsupportedCompoundCreationDoesNotExecuteAPrefix() {
+        val parent=obj("id" to "parent","type" to "FOLDER","title" to "测试目录")
+        assertNull(Offline.plan("在“测试目录”下面建“项目甲”，再写一份报告",emptyList(),today,spaces={listOf(parent)}))
+        assertNull(Offline.plan("把按钮颜色改成蓝色",listOf(study),today))
+    }
+
+    @Test fun weightedScoreIsReadOnlyAndUsesCounts() {
+        val plan=Offline.plan("假设有4次练习，1次50分，3次90分，求平均分，不要记入数据库",emptyList(),today)!!
+        assertEquals("平均分 80 分（共 4 次）",plan.s("localAnswer"))
+        assertFalse(plan.has("steps"))
+    }
+
+    @Test fun explicitCalendarDatesAndUnspecifiedClockStayDistinct() {
+        val args=args(Offline.plan("11月2日学习了45分钟，没有具体开始时间",listOf(study),today)!!)
+        assertEquals("2026-11-02",args.s("date"))
+        assertTrue(args.isNull("occurredAt"))
+        val overnight=args(Offline.plan("2026年10月20日23:00睡到10月21日00:40",listOf(sleep),today)!!)
+        val duration=java.time.Duration.between(java.time.Instant.parse(overnight.s("startAt")),java.time.Instant.parse(overnight.s("endAt")))
+        assertEquals(100L,duration.toMinutes())
+    }
 }
