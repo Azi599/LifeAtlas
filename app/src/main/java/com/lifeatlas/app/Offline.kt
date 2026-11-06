@@ -64,6 +64,7 @@ object Offline {
     private val listing = Regex("^把($dateWord)(?:的)?(?:所有)?(.+?)记录列出来(?:让我核对)?$")
     private val dailySpend = Regex("^(?:查查|查一下|查询)?($dateWord)([^,，?？]*?)(?:一共|总共)?(?:花了|支出)(?:多少钱|多少|合计)$|^(?:查查|查一下|查询)?($dateWord)总开销$")
     private val monthCash = Regex("^(?:汇报|统计)([0-9]{1,2})月收入[,、]支出[,、]净现金流(?:[,，]逐项说明口径)?(?:[;；]没数据不许猜)?$")
+    private val dailyExpenseChart = Regex("^(?:给我|画|生成|展示)(?:一张)?(本月|这个月|上月|上个月|[0-9]{1,2}月)每天的?(?:支出|开销)(?:趋势图|折线图)(?:[,，].*(?:没记录|缺失|没有记录).*)?$")
     private val listDay = Regex("^(?:列出|查看)($dateWord)(?:的)?(?:所有)?记录$")
     private val createQuoted = Regex("^(?:新建|创建)(?:一个|个)?([“「\"][^”」\"]+[”」\"])(项目|目录|文件夹)$")
     private val localPrefix = Regex("^(?:现在断网|离线)[:：]\\s*")
@@ -126,6 +127,15 @@ object Offline {
             val month=match.groupValues[1].toIntOrNull()?.takeIf{it in 1..12} ?: return null
             val period=java.time.YearMonth.of(today.year,month)
             return command(input,"finance.cashflow",obj("from" to period.atDay(1).toString(),"to" to period.atEndOfMonth().toString(),"includeBasis" to true))
+        }
+        dailyExpenseChart.matchEntire(compact(request))?.let { match ->
+            val range=match.groupValues[1]
+            val (from,to)=dateRange(range,today) ?: run {
+                val month=range.removeSuffix("月").toIntOrNull()?.takeIf{it in 1..12} ?: return null
+                val period=java.time.YearMonth.of(today.year,month)
+                period.atDay(1) to period.atEndOfMonth()
+            }
+            return command(input,"finance.dailySpending",obj("from" to from.toString(),"to" to to.toString()))
         }
         drawChart.matchEntire(compact(request))?.let { match ->
             val (subject,type)=match.destructured
@@ -678,7 +688,7 @@ object Offline {
         "本月","这个月" -> today.withDayOfMonth(1) to today
         "上月","上个月" -> today.minusMonths(1).withDayOfMonth(1) to today.withDayOfMonth(1).minusDays(1)
         "近七天","最近七天" -> today.minusDays(6) to today
-        else -> if(value.startsWith("近")) {
+        else -> if(value.startsWith("近") || value.startsWith("最近")) {
             val days=value.filter(Char::isDigit).toLongOrNull()?.takeIf{it in 1..90} 
             days?.let { today.minusDays(it-1) to today }
         } else parseDate(value,today)?.let { it to it }
