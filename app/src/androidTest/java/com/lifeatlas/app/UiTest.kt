@@ -222,9 +222,9 @@ class UiTest {
         rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("余额"))
         rule.onNodeWithText("余额").performClick()
         rule.onNodeWithText("实测余额：请选择").performClick()
-        rule.onNodeWithText(balanceTitle).performScrollTo().performClick()
-        rule.onNodeWithText(firstTitle).performScrollTo().performClick()
-        rule.onNodeWithText(secondTitle).performScrollTo().performClick()
+        rule.onNode(hasText(balanceTitle) and hasClickAction()).performScrollTo().performClick()
+        rule.onNode(hasText(firstTitle) and hasClickAction()).performScrollTo().performClick()
+        rule.onNode(hasText(secondTitle) and hasClickAction()).performScrollTo().performClick()
         rule.onNodeWithText("计算").performScrollTo().assertIsEnabled().performClick()
         rule.waitUntil(10000){
             !vm.ui.value.busy && vm.ui.value.result?.optJSONObject("steps")?.optJSONObject("result")
