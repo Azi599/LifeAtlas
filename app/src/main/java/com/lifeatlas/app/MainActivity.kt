@@ -189,8 +189,8 @@ class MainActivity:ComponentActivity() {
                     state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
                 }
                 "spaces" -> {
-                    item{ActionRow{if(selected!=null) TextButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")} else TextButton(onClick={page=spaceReturn}){Text("返回")};TextButton(onClick={create=true}){Text("新建")};if(chosen!=null) TextButton(onClick={edit=chosen}){Text("管理")}}}
-                    item{TextButton(onClick={editingPage=null;pageBuilder=true}){Text("新建页面")};if(chosen?.s("type")=="VIEW" && JSONObject(chosen.s("config")).s("component")=="schema")TextButton(onClick={editingPage=chosen;pageBuilder=true}){Text("编辑页面")}}
+                    item{ActionRow{if(selected!=null) OutlinedButton(onClick={selected=chosen?.s("parent_id")?.ifEmpty{null}}){Text("返回上级")} else OutlinedButton(onClick={page=spaceReturn}){Text("返回")};OutlinedButton(onClick={create=true}){Text("新建")};if(chosen!=null) OutlinedButton(onClick={edit=chosen}){Text("管理")}}}
+                    item{ActionRow{OutlinedButton(onClick={editingPage=null;pageBuilder=true}){Text("新建页面")};if(chosen?.s("type")=="VIEW" && JSONObject(chosen.s("config")).s("component")=="schema")OutlinedButton(onClick={editingPage=chosen;pageBuilder=true}){Text("编辑页面")}}}
                     if(chosen!=null && analysisComponents(chosen).isNotEmpty()) item {
                         val saved=analysisLayout[chosen.s("id")]
                         val pinned=saved!=null && saved.optInt("hidden")==0

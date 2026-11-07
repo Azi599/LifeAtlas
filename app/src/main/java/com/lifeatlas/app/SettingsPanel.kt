@@ -18,7 +18,7 @@ import org.json.JSONObject
     BackHandler(panel.isNotEmpty()){panel=""}
     var showRecovery by remember{mutableStateOf(false)};var recovery by remember{mutableStateOf<String?>(null)}
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        if(panel.isEmpty())listOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理","plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明").forEach{(id,title)->TextButton(modifier=Modifier.fillMaxWidth(),onClick={panel=id}){Text(title,Modifier.weight(1f));Text("›")}};if(panel.isNotEmpty())TextButton(onClick={panel=""}){Text("返回")}
+        if(panel.isEmpty())listOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理","plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明").forEach{(id,title)->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={panel=id}){Text(title,Modifier.weight(1f));Text("›")}};if(panel.isNotEmpty())OutlinedButton(onClick={panel=""}){Text("返回")}
         when(panel) {
             "appearance"->ThemeEditor(vm)
             "ai"->{OutlinedTextField(endpoint,{endpoint=it},label={Text("Chat Completions 完整 HTTPS 地址")},modifier=Modifier.fillMaxWidth());OutlinedTextField(model,{model=it},label={Text("模型名称")},modifier=Modifier.fillMaxWidth());OutlinedTextField(key,{key=it},label={Text("API 密钥")},visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth());Button(onClick={vm.work("保存 AI 设置"){vm.settings.saveAi(endpoint,model,key);obj("message" to "AI 设置已保存")}}){Text("保存")}}
