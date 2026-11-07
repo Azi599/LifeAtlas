@@ -173,11 +173,12 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
     }
     val snapshots=money.filter{JSONObject(it.s("config")).s("kind")=="SNAPSHOT"}
     val changes=money.filter{JSONObject(it.s("config")).s("kind")=="CHANGE"}
+    val accounts=changes.filter{JSONObject(it.s("config")).s("role") in setOf("accountChange","")}
     val validDate=runCatching{LocalDate.parse(date)}.isSuccess
     val validAmount=amount.toBigDecimalOrNull()?.signum()==1
     AlertDialog(onDismissRequest=onDismiss,title={Text(if(balance) "余额" else "转账")},text={
         Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            Pick(if(balance) "实测余额" else "转出账户",(if(balance)snapshots else changes).map{it.s("id") to it.s("title")},from){from=it}
+            Pick(if(balance) "实测余额" else "转出账户",(if(balance)snapshots else accounts).map{it.s("id") to it.s("title")},from){from=it}
             if(balance) {
                 Text("关联流水",style=MaterialTheme.typography.titleSmall)
                 changes.forEach { item ->
@@ -190,7 +191,7 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
                     }
                 }
             } else {
-                Pick("转入账户",changes.filter{it.s("id")!=from}.map{it.s("id") to it.s("title")},to){to=it}
+                Pick("转入账户",accounts.filter{it.s("id")!=from}.map{it.s("id") to it.s("title")},to){to=it}
                 OutlinedTextField(amount,{amount=it},label={Text("金额")},modifier=Modifier.fillMaxWidth())
             }
             OutlinedTextField(date,{date=it},label={Text(if(balance) "截止日期" else "发生日期")},modifier=Modifier.fillMaxWidth())
