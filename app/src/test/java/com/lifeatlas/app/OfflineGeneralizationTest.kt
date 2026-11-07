@@ -100,4 +100,15 @@ class OfflineGeneralizationTest {
         assertEquals("2027-03-17",actions[1].getJSONObject("args").s("from"))
         assertNull(Offline.plan("记录昨天转轴长度8厘米，接着把全部档案发给其他人",listOf(tool),today))
     }
+
+    @Test fun politeWrappersAndAlternateDatePositionPreserveTheRecord() {
+        val fixture=metric("panel","控制面板厚度","毫米","面板厚度")
+        for(phrase in listOf("麻烦记一下，面板厚度昨儿是9毫米","昨儿量出来控制面板厚度9毫米，请登记")) {
+            val args=steps(Offline.plan(phrase,listOf(fixture),today)!!).single().getJSONObject("args")
+            assertEquals("panel",args.s("metricId"))
+            assertEquals("2027-03-17",args.s("date"))
+            assertEquals("9",args.s("value"))
+        }
+        assertNull(Offline.plan("10:10面板厚度昨儿是9毫米",listOf(fixture),today))
+    }
 }

@@ -12,7 +12,7 @@ object Offline {
     private data class Vocabulary(val words: List<String>, val kind: String = "", val role: String = "", val unit: String = "", val titles: Set<String> = emptySet(),
         val defaultTitle: String = "", val defaultUnit: String = "", val defaultKind: String = "CHANGE")
     private data class Quantity(val value: BigDecimal, val unit: String)
-    private data class Match(val metric: JSONObject, val quantity: Quantity)
+    private data class Match(val metric: JSONObject, val quantity: Quantity, val date: LocalDate? = null)
 
     private val vocabulary = listOf(
         Vocabulary(listOf("学习时长","学习时间","学习","学了","自习","复习"),kind="ALLOCATION",defaultTitle="学习时间",defaultUnit="分钟"),
@@ -64,10 +64,14 @@ object Offline {
     private val startTimer = Regex("^(?:请|帮我)?(?:开始(.+?)计时|给(.+?)开始计时|开始计时(.+))$")
     private val namedTimer = Regex("^(暂停|继续|结束|停止)(?:刚才的)?(.+?)(?:计时)?(?:[,，]告诉我实际有效时长)?$")
     private val timerAction = mapOf("暂停计时" to "time.pause","继续计时" to "time.resume","结束计时" to "time.stop","停止计时" to "time.stop")
-    private val recordLead = Regex("^(?:请|帮我|给我)?(?:记录一下|记一笔|记一下|记下|记录|补记|记)")
-    private val dateWord = "今天|今日|昨天|昨日|前天|今早|昨早|昨晚|今晚|刚才|刚刚|今儿|上周[一二三四五六日天]|(?:\\d{4}年)?\\d{1,2}月\\d{1,2}日|\\d{4}-\\d{2}-\\d{2}"
+    private val recordLead = Regex("^(?:请|帮我|给我|麻烦)?(?:记录(?:了)?一下|登记一下|记一笔|记一下|记下来|记下|记录|登记|补记|记)")
+    private val recordPrompt = Regex("^(?:请|帮我|给我|麻烦)?(?:记录一下|登记一下|记一下|记下来|记下)[,，:]\\s*")
+    private val recordTail = Regex("[,，](?:请|帮我|给我|麻烦)?(?:登记(?:一下)?|记录一下|记一下|记上|记下来|存一下)$")
+    private val measurementLead="实测|测得|测量为|测出来|量到|量得|量出来|称得"
+    private val measurementPrefix=Regex("^($measurementLead)")
+    private val dateWord = "今天|今日|昨天|昨日|昨儿|前天|前儿|今早|昨早|昨晚|今晚|刚才|刚刚|今儿|上周[一二三四五六日天]|(?:\\d{4}年)?\\d{1,2}月\\d{1,2}日|\\d{4}-\\d{2}-\\d{2}"
     private val dateLead = Regex("^($dateWord)")
-    private val quantityFirst=Regex("^($dateWord)(?:实测|测得|测量为|量到)?(.+?)[,，]?(?:记到|记入|录到|录入到)(.{1,80})$")
+    private val quantityFirst=Regex("^($dateWord)(?:$measurementLead)?(.+?)[,，]?(?:记到|记入|录到|录入到)(.{1,80})$")
     private val dateCorrection = Regex("^(?:我有一笔|把|请把)(.+?)(?:的)?日期(?:写错了[,，]?(?:帮我)?|直接)?(?:改成|改为|更正为)($dateWord)$")
     private val meridiem = "凌晨|早上|上午|中午|下午|傍晚|晚上"
     private val clockNumber = "[0-9零〇一二两三四五六七八九十]{1,3}"
@@ -139,7 +143,8 @@ object Offline {
             return command(input,"atlas.createEvent",obj("text" to content,"date" to today.toString()))
         }
         val request = text.removeSuffix("?").replaceFirst(Regex("^我(?=今天|昨天|今早|今晚)"),"")
-            .replace(Regex("(?:[,，](?:但忘了几点|没有具体开始时间|给我记上|帮我记上))$"),"")
+            .replaceFirst(recordPrompt,"").replace(recordTail,"")
+            .replace(Regex("(?:[,，](?:但忘了几点|没有具体开始时间))$"),"")
         zoneDay.matchEntire(compact(request))?.let { match ->
             val (source,date,time,destination)=match.destructured
             val day=parseDate(date,today) ?: return null
@@ -658,14 +663,23 @@ object Offline {
         if (startClock!=null) body = body.drop(startClock.value.length)
         val quoted=quotedTitle.find(body)?.takeIf{it.range.first==0}
         val exact=if(quoted==null) {
-            fun matches(useAliases:Boolean)=metrics.mapNotNull { metric ->
+            fun matches(subject:String,useAliases:Boolean)=metrics.mapNotNull { metric ->
                 val labels=if(useAliases) metricLabels(metric) else listOf(compact(metric.s("title")))
                 labels.filter{it.isNotEmpty()}.sortedByDescending{it.length}.firstNotNullOfOrNull{title->
-                    if(!body.startsWith(title)) null
-                    else parseQuantity(body.drop(title.length))?.let{title.length to Match(metric,it)}
+                    if(!subject.startsWith(title)) return@firstNotNullOfOrNull null
+                    val remainder=subject.drop(title.length)
+                    val scalar=parseQuantity(remainder)
+                    if(scalar!=null) return@firstNotNullOfOrNull title.length to Match(metric,scalar)
+                    if(date!=null || occurredAt!=null) return@firstNotNullOfOrNull null
+                    val followingDay=dateLead.find(remainder)?.value ?: return@firstNotNullOfOrNull null
+                    val explicit=parseDate(followingDay,today) ?: return@firstNotNullOfOrNull null
+                    parseQuantity(remainder.drop(followingDay.length))?.let{title.length to Match(metric,it,explicit)}
                 }
             }
-            matches(false).ifEmpty{matches(true)}
+            matches(body,false).ifEmpty{matches(body,true)}.ifEmpty{
+                val subject=body.replaceFirst(measurementPrefix,"")
+                if(subject==body) emptyList() else matches(subject,false).ifEmpty{matches(subject,true)}
+            }
         } else {
             val quantity=parseQuantity(body.drop(quoted.value.length)) ?: return null
             val targets=namedMetrics(quoted.groupValues[1],metrics)
@@ -685,14 +699,14 @@ object Offline {
     }
 
     private fun scalarRecord(input:String,matches:List<Match>,day:LocalDate,occurredAt:java.time.Instant?):JSONObject? {
-        val options = matches.mapNotNull { (metric,q) ->
+        val options = matches.mapNotNull { (metric,q,explicitDate) ->
             val config = JSONObject(metric.s("config"))
             val unit = config.s("unit")
             if (q.unit.isNotBlank() && runCatching { Units.convert(q.value,q.unit,unit) }.isFailure) return@mapNotNull null
             if (config.s("kind")=="ALLOCATION" && q.value.signum()<0) return@mapNotNull null
             if (!acceptsScalar(config)) return@mapNotNull null
             metric to command(input,"atlas.record",obj("metricId" to metric.s("id"),"value" to q.value.toPlainString(),
-                "unit" to q.unit.ifBlank{unit},"date" to day.toString(),"occurredAt" to occurredAt?.toString()))
+                "unit" to q.unit.ifBlank{unit},"date" to (explicitDate ?: day).toString(),"occurredAt" to occurredAt?.toString()))
         }
         return choose(input,"记到哪个指标？",options)
     }
@@ -917,8 +931,8 @@ object Offline {
     }
     private fun parseDate(value:String,today:LocalDate):LocalDate? = when(value) {
         "今天","今日","今早","今晚","刚才","刚刚","今儿" -> today
-        "昨天","昨日","昨早","昨晚" -> today.minusDays(1)
-        "前天" -> today.minusDays(2)
+        "昨天","昨日","昨儿","昨早","昨晚" -> today.minusDays(1)
+        "前天","前儿" -> today.minusDays(2)
         else -> {
             if(value.startsWith("上周")) {
                 val day=when(value.last()){'日','天'->7;else->InputEvidence.number(value.takeLast(1))?.toInt()}
