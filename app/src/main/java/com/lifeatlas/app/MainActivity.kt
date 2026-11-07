@@ -121,6 +121,7 @@ class MainActivity:ComponentActivity() {
     LaunchedEffect(state.result){if(state.result?.optBoolean("notice")==true) notices.showSnackbar(state.status)}
     LaunchedEffect(page,selected,state.historyOffset){listState.scrollToItem(0)}
     LaunchedEffect(page) {
+        quickActions=false
         pageAlpha.snapTo(0.88f)
         pageAlpha.animateTo(1f,animationSpec=tween(160))
     }
@@ -153,6 +154,7 @@ class MainActivity:ComponentActivity() {
         when {
             page=="spaces" && selected!=null -> selected=chosen?.s("parent_id")?.ifEmpty{null}
             page=="spaces" -> page=spaceReturn
+            page=="settings" && settingsPanel.isNotEmpty() -> settingsPanel=""
             else -> {page="workspace";selected=null}
         }
     }

@@ -34,9 +34,10 @@ class UiTest {
         rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("创建功能包"))
         rule.onNodeWithText("创建功能包").assertIsDisplayed()
         rule.onNodeWithText("导入到测试区").assertExists()
-        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("返回"))
-        rule.onNodeWithText("返回").performClick()
-        rule.onNodeWithText("云端构建").performScrollTo().performClick()
+        rule.runOnUiThread{rule.activity.onBackPressedDispatcher.onBackPressed()}
+        rule.waitForIdle()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("云端构建"))
+        rule.onNodeWithText("云端构建").performClick()
         rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("新增原生能力"))
         rule.onNodeWithText("新增原生能力").assertIsDisplayed()
     }
