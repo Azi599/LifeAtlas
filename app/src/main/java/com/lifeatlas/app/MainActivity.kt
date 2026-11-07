@@ -119,7 +119,7 @@ class MainActivity:ComponentActivity() {
     val pageAlpha=remember{Animatable(1f)}
     val notices=remember{SnackbarHostState()}
     LaunchedEffect(state.result){if(state.result?.optBoolean("notice")==true) notices.showSnackbar(state.status)}
-    LaunchedEffect(page,selected,state.historyOffset){listState.scrollToItem(0)}
+    LaunchedEffect(page,selected,state.historyOffset,settingsPanel){listState.scrollToItem(0)}
     LaunchedEffect(page) {
         quickActions=false
         pageAlpha.snapTo(0.88f)
