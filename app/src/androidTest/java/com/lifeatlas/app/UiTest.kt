@@ -20,6 +20,25 @@ class UiTest {
         rule.waitForIdle()
         rule.onNodeWithText("新建").assertExists()
     }
+    @Test fun secondaryActionsStayReachableFromTheirSections() {
+        rule.onNodeWithTag("command-input").assertIsDisplayed()
+        rule.onNodeWithText("手动录入").assertDoesNotExist()
+        rule.onNodeWithText("操作").performClick()
+        rule.onNodeWithText("手动录入").assertIsDisplayed()
+        rule.onNodeWithText("记文字").performClick()
+        rule.onNodeWithText("记录文字").assertIsDisplayed()
+        rule.onNodeWithText("取消").performClick()
+        rule.onNodeWithTag("tab-settings").performClick()
+        rule.onNodeWithText("插件中心").assertDoesNotExist()
+        rule.onNodeWithText("功能包").performScrollTo().performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("创建功能包"))
+        rule.onNodeWithText("创建功能包").assertIsDisplayed()
+        rule.onNodeWithText("导入到测试区").assertExists()
+        rule.onNodeWithText("返回").performScrollTo().performClick()
+        rule.onNodeWithText("云端构建").performScrollTo().performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("新增原生能力"))
+        rule.onNodeWithText("新增原生能力").assertIsDisplayed()
+    }
     @Test fun dynamicPluginRendersAndAcceptsRecord(){
         val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
         val manifest=obj("id" to "test.random${System.currentTimeMillis()}","title" to "蚀刻实验","version" to 1,

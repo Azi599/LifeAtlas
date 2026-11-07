@@ -90,7 +90,8 @@ private fun TimelineRow(row: JSONObject, onEdit: () -> Unit) {
                 if (!note) {
                     val config = JSONObject(row.s("metric_config","{}"))
                     val unit = config.s("unit").let{if(it=="CNY") "元" else it}
-                    Text(listOf(row.s("value","未填写"),unit.takeIf{!row.isNull("value")}.orEmpty()).filter{it.isNotBlank()}.joinToString(" "))
+                    Text(listOf(row.s("value","未填写"),unit.takeIf{!row.isNull("value")}.orEmpty()).filter{it.isNotBlank()}.joinToString(" "),
+                        style=MaterialTheme.typography.titleMedium)
                     val fields = JSONObject(row.s("fields_json","{}"))
                     config.optJSONArray("fields")?.objects()?.forEach { field ->
                         val raw = fields.s(field.s("id"))

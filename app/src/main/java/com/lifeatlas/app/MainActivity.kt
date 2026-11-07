@@ -10,6 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,12 +22,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
@@ -103,14 +109,21 @@ class MainActivity:ComponentActivity() {
 
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,
     onPlugin:()->Unit,onSandboxPlugin:()->Unit,onPluginExport:(String)->Unit,onImage:()->Unit) {
-    val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsSubpage by remember{mutableStateOf(false)};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
+    val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsPanel by rememberSaveable{mutableStateOf("")};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
+    val settingsSubpage=settingsPanel.isNotEmpty()
     var showImageText by remember{mutableStateOf(false)}
+    var quickActions by remember{mutableStateOf(false)}
     var spaceReturn by rememberSaveable{mutableStateOf("settings")}
     val command=state.draft;var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
     val listState=rememberLazyListState()
+    val pageAlpha=remember{Animatable(1f)}
     val notices=remember{SnackbarHostState()}
     LaunchedEffect(state.result){if(state.result?.optBoolean("notice")==true) notices.showSnackbar(state.status)}
     LaunchedEffect(page,selected,state.historyOffset){listState.scrollToItem(0)}
+    LaunchedEffect(page) {
+        pageAlpha.snapTo(0.88f)
+        pageAlpha.animateTo(1f,animationSpec=tween(160))
+    }
     val scope=rememberCoroutineScope()
     fun editById(id:String){scope.launch {val row=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO){vm.store.query("SELECT f.*,o.title metric_title FROM atlas_facts f JOIN atlas_objects o ON o.id=f.metric_id WHERE f.id=?",arrayOf(id)).firstOrNull()?.also{f->f.put("value",resolvedRecordValue(f.s("value").takeIf{it.isNotEmpty()}?.let(::decimal),JSONObject(f.s("fields_json")),vm.store.config(f.s("metric_id")))?.toPlainString() ?: JSONObject.NULL)}};editingFact=row}}
     var pageBuilder by remember{mutableStateOf(false)};var editingPage by remember{mutableStateOf<JSONObject?>(null)}
@@ -156,34 +169,46 @@ class MainActivity:ComponentActivity() {
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }},
         bottomBar={Column(Modifier.imePadding()) {
-            if(page=="workspace") Surface(Modifier.fillMaxWidth()) {Column(Modifier.padding(horizontal=18.dp,vertical=8.dp)) {
+            if(page=="workspace") Surface(Modifier.fillMaxWidth().animateContentSize(),shape=RoundedCornerShape(topStart=20.dp,topEnd=20.dp)) {Column(Modifier.padding(horizontal=18.dp,vertical=10.dp)) {
                 if(state.status.isNotBlank()) Text(state.status,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=if(state.error.isNotBlank())MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(bottom=4.dp).testTag("command-status"))
                 val canSend = !state.busy && (command.isNotBlank() || state.imageText.isNotBlank())
                 OutlinedTextField(command,vm::saveDraft,modifier=Modifier.fillMaxWidth().testTag("command-input"),
-                    label={Text("输入")},minLines=1,maxLines=3,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),
+                    placeholder={Text("写点什么")},minLines=1,maxLines=3,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),
                     keyboardActions=KeyboardActions(onSend={if(canSend) vm.submit(command)}))
                 Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-                    OutlinedButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "换图")}
-                    if(state.image!=null)OutlinedButton(enabled=!state.busy,onClick=vm::clearImage){Text("移除")}
+                    OutlinedButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}
+                    Box {
+                        OutlinedButton(enabled=!state.busy,onClick={quickActions=true}){Text("操作")}
+                        DropdownMenu(expanded=quickActions,onDismissRequest={quickActions=false}) {
+                            val imageActions:List<Pair<String,()->Unit>> =
+                                if(state.image!=null) listOf("移除图片" to {vm.clearImage()}) else emptyList()
+                            val actions:List<Pair<String,()->Unit>> = listOf(
+                                "手动录入" to {manualRecord=true},
+                                "记文字" to {eventDialog=true},
+                                "撤销" to {vm.undo()},
+                                "恢复" to {vm.undo(true)}
+                            ) + imageActions
+                            actions.forEach { (title,action) ->
+                                OutlinedButton(modifier=Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=3.dp),onClick={
+                                    quickActions=false
+                                    action()
+                                }) { Text(title) }
+                            }
+                        }
+                    }
                     Spacer(Modifier.weight(1f))
                     Button(modifier=Modifier.testTag("command-send"),enabled=canSend,onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "发送")}
                 }
             }}
-            if(!keyboard)NavigationBar(modifier=Modifier.testTag("atlas-navigation"),containerColor=MaterialTheme.colorScheme.surface) {tabs.forEachIndexed{i,(id,title)->NavigationBarItem(modifier=Modifier.testTag("tab-$id"),colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=currentTab==id,onClick={page=id;selected=null;settingsSubpage=false},icon={NavGlyph(if(i==0)0 else i+1,currentTab==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelMedium)})}}
+            AnimatedVisibility(visible=!keyboard) {
+                NavigationBar(modifier=Modifier.testTag("atlas-navigation"),containerColor=MaterialTheme.colorScheme.surface) {tabs.forEachIndexed{i,(id,title)->NavigationBarItem(modifier=Modifier.testTag("tab-$id"),colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=currentTab==id,onClick={page=id;selected=null;settingsPanel=""},icon={NavGlyph(if(i==0)0 else i+1,currentTab==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelMedium)})}}
+            }
         }}
     ) {padding->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("atlas-list"),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).graphicsLayer{alpha=pageAlpha.value}.testTag("atlas-list"),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.error.isNotBlank() && page!="workspace") item {Text(state.error,color=MaterialTheme.colorScheme.error)}
             when(page) {
                 "workspace" -> {
-                    item {
-                        ActionRow {
-                            OutlinedButton(enabled=!state.busy,onClick={manualRecord=true}){Text("手动录入")}
-                            OutlinedButton(enabled=!state.busy,onClick={eventDialog=true}){Text("记文字")}
-                            OutlinedButton(enabled=!state.busy,onClick={vm.undo()}){Text("撤销")}
-                            OutlinedButton(enabled=!state.busy,onClick={vm.undo(true)}){Text("恢复")}
-                        }
-                    }
                     if(state.imageText.isNotBlank())item {Column {TextButton(onClick={showImageText=!showImageText}){Text(if(showImageText)"收起原文" else "识别原文")};if(showImageText)OutlinedTextField(state.imageText,vm::editImageText,label={Text("图片文字")},modifier=Modifier.fillMaxWidth(),minLines=3)}}
                     state.pending?.let {pending->item {PlanPreview(pending,objects=objects,busy=state.busy,error=state.error,onConfirm={vm.execute(it,true)},onCancel=vm::clearPending)}}
                     state.result?.let{result->item{ExecutionResults(result,objects,onOpen={open(it)},onFact={editingFact=it},onRetry={vm.execute(it,true)},onFactId={editById(it)})}}
@@ -240,8 +265,9 @@ class MainActivity:ComponentActivity() {
                     if(!settingsSubpage) item("space-entry") {
                         OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理")}
                     }
-                    item("settings-panel"){SettingsPanel(vm,onExport,onCsv,onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin,onSubpage={settingsSubpage=it})}
-                    if(!settingsSubpage) {
+                    item("settings-panel"){SettingsPanel(vm=vm,panel=settingsPanel,onPanelChange={settingsPanel=it},
+                        onExport=onExport,onCsv=onCsv,onErrors=onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
+                    if(settingsPanel=="plugin") {
                     item{
                         Text("插件中心",style=MaterialTheme.typography.titleLarge)
                         ActionRow {
@@ -269,7 +295,9 @@ class MainActivity:ComponentActivity() {
                     }
                     item{Text("工作流",style=MaterialTheme.typography.titleLarge);TextButton(onClick={workflowDialog=true}){Text("新建工作流")}}
                     items(state.workflows,key={it.s("id")}){w->Column{Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically){Text(w.s("title"),Modifier.weight(1f));Switch(w.optInt("enabled")==1,{vm.action("atlas.setWorkflowStatus",obj("id" to w.s("id"),"enabled" to it),"更新工作流")})};TextButton(onClick={vm.action("atlas.deleteWorkflow",obj("id" to w.s("id")),"删除工作流")}){Text("删除")}}}
-                    item{Text("应用扩展与更新",style=MaterialTheme.typography.titleLarge);TextButton(onClick={buildDialog=true}){Text("新增原生能力")}}
+                    }
+                    if(settingsPanel=="build") {
+                    item{Text("应用扩展",style=MaterialTheme.typography.titleLarge);TextButton(onClick={buildDialog=true}){Text("新增原生能力")}}
                     items(state.builds,key={it.s("id")}){b->BuildCard(b,vm)}
                     }
                 }
