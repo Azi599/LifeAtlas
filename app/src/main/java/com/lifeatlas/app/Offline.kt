@@ -122,7 +122,7 @@ object Offline {
         plan(input,store.metrics(),LocalDate.now(),
             records={ metric, date -> store.timeline(metric,date,date,0).take(50) },
             timers={ store.query("SELECT * FROM atlas_timers WHERE state != 'STOPPED' ORDER BY created_at DESC LIMIT 50") },
-            spaces={ store.objects(all=true) })
+            spaces={ store.query("SELECT * FROM atlas_objects WHERE archived=0 ORDER BY title,id") })
 
     internal fun plan(
         input: String,

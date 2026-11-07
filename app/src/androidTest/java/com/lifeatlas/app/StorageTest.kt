@@ -144,6 +144,34 @@ class StorageTest {
         assertEquals(1,summary.getInt("emptyDays"))
         assertEquals(1,summary.getInt("incompleteDays"))
     }
+    @Test fun definitionsBeyondTheFirstPageParticipateInOfflineInputAndCharts() {
+        val sql=db.writableDatabase
+        val timestamp=now()
+        sql.beginTransaction()
+        try {
+            repeat(505) { index ->
+                sql.execSQL("""INSERT INTO atlas_objects
+                    (id,type,title,config,created_at,updated_at)
+                    VALUES (?,'METRIC',?,?,?,?)""",
+                    arrayOf("metric-$index","A${index.toString().padStart(4,'0')}",
+                        obj("kind" to "SNAPSHOT","unit" to "次").toString(),timestamp,timestamp))
+            }
+            sql.setTransactionSuccessful()
+        } finally {sql.endTransaction()}
+        val id=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "Z其他支出",
+            "config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val plan=Offline.plan("今天Z其他支出7.5元",db)!!
+        actions.execute(plan)
+        assertEquals("7.50",db.facts(id).single().s("value"))
+        val page=actions.dispatch("atlas.searchObjects",obj("keyword" to "","type" to "METRIC","offset" to 500))
+        assertEquals(500,page.optInt("offset"))
+        assertFalse(page.optBoolean("hasMore"))
+        assertTrue(page.getJSONArray("objects").objects().any{it.s("id")==id})
+        val day=LocalDate.now().toString()
+        val series=db.dailySpending(day,day).getJSONArray("points")
+        assertEquals("7.5",series.getJSONObject(0).s("value"))
+    }
     @Test fun matchingExpensesDeleteAndUndoAsOneOperation() {
         val id=actions.single("atlas.createObject",obj("type" to "METRIC","title" to "日用支出",
             "config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")))

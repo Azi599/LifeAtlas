@@ -345,7 +345,17 @@ class Actions(val store:AtlasStore) {
                 }
                 return obj("id" to r.s("id"))
             }
-            "atlas.searchObjects" -> {val keyword=a.s("keyword");require(keyword.length<=100);return obj("objects" to JSONArray(store.query("SELECT * FROM atlas_objects WHERE archived=0 AND title LIKE ? ${if(a.s("type").isNotEmpty()) "AND type=?" else ""} ORDER BY title LIMIT 100 OFFSET ?",(listOf("%$keyword%")+listOfNotNull(a.s("type").ifEmpty{null})+a.optInt("offset").coerceAtLeast(0).toString()).toTypedArray())))}
+            "atlas.searchObjects" -> {
+                val keyword=a.s("keyword")
+                require(keyword.length<=100)
+                val offset=a.optInt("offset").coerceAtLeast(0)
+                val type=a.s("type").takeIf{it.isNotBlank()}
+                val rows=store.query(
+                    "SELECT * FROM atlas_objects WHERE archived=0 AND title LIKE ? ${if(type!=null) "AND type=?" else ""} ORDER BY title,id LIMIT 101 OFFSET ?",
+                    (listOf("%$keyword%")+listOfNotNull(type)+offset.toString()).toTypedArray()
+                )
+                return obj("objects" to JSONArray(rows.take(100)),"offset" to offset,"hasMore" to (rows.size>100))
+            }
             "atlas.query" -> return obj("metricId" to a.s("metricId"),"from" to a.s("from","0001-01-01"),"to" to a.s("to","9999-12-31"),"records" to JSONArray(store.facts(a.s("metricId").ifEmpty{null},a.s("from","0001-01-01"),a.s("to","9999-12-31"),a.optInt("offset"),a.optInt("limit",50).coerceAtMost(100))))
             "atlas.chart"->{val id=a.getString("metricId");val chart=a.s("chart","line");require(chart in setOf("line","bar","heatmap"));return obj("metricId" to id,"chart" to chart,"unit" to store.config(id).s("unit"),"points" to JSONArray(store.dailySeries(id,a.getString("from"),a.getString("to"))))}
             "atlas.aggregate" -> return store.aggregate(a.getString("metricId"),a.getString("from"),a.getString("to"),a.s("method",store.config(a.getString("metricId")).s("aggregate","SUM")))

@@ -19,6 +19,7 @@ internal class PlanningContext(private val original: JSONObject) {
         val task = original.optJSONObject("currentTask")
         return obj(
             "objects" to JSONArray(objects.map(::objectInfo)),
+            "objectsTruncated" to original.optBoolean("objectsTruncated"),
             "selectedObjectId" to alias(original.s("selectedObjectId"), "o"),
             "appearance" to original.optJSONObject("appearance")?.let {
                 obj("mode" to it.s("mode"), "compact" to (it.optInt("compact") == 1), "themeId" to it.s("theme_id"))
@@ -62,7 +63,8 @@ internal class PlanningContext(private val original: JSONObject) {
             "records" to JSONArray(result.getJSONArray("records").objects().map(::record)),
             "offset" to result.opt("offset"), "limit" to result.opt("limit")
         )
-        result.has("objects") -> obj("objects" to JSONArray(result.getJSONArray("objects").objects().map(::objectInfo)))
+        result.has("objects") -> obj("objects" to JSONArray(result.getJSONArray("objects").objects().map(::objectInfo)),
+            "offset" to result.optInt("offset"),"hasMore" to result.optBoolean("hasMore"))
         else -> result
     }
 

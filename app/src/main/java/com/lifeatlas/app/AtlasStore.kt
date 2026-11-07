@@ -75,7 +75,7 @@ class AtlasStore(val appContext:Context, name:String="lifeatlas.db") : SQLiteOpe
     fun query(sql:String,args:Array<String>?=null):List<JSONObject> = readableDatabase.rawQuery(sql,args).use {c->buildList {while(c.moveToNext()) add(row(c))} }
     fun one(table:String,id:String):JSONObject? {require(table in tables);return query("SELECT * FROM $table WHERE id=?",arrayOf(id)).firstOrNull()}
     fun objects(parent:String?=null,all:Boolean=false):List<JSONObject> = if(all) query("SELECT * FROM atlas_objects WHERE archived=0 ORDER BY title LIMIT 500") else query("SELECT * FROM atlas_objects WHERE archived=0 AND ${if(parent==null) "parent_id IS NULL" else "parent_id=?"} ORDER BY type,title LIMIT 200",parent?.let{arrayOf(it)})
-    fun metrics()=query("SELECT * FROM atlas_objects WHERE type='METRIC' AND archived=0 ORDER BY title LIMIT 500")
+    fun metrics()=query("SELECT * FROM atlas_objects WHERE type='METRIC' AND archived=0 ORDER BY title,id")
     fun config(id:String)=JSONObject(one("atlas_objects",id)?.s("config") ?: error("对象不存在"))
     fun put(table:String,row:JSONObject) {
         require(table in tables && table!="atlas_operations");val j=journal ?: error("写入必须经过操作事务");val id=row.getString("id");val before=one(table,id)

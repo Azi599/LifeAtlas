@@ -45,6 +45,7 @@ class Planner(private val actions: Actions) {
             {"title":"新建空项目","steps":[{"stepId":"s1","actionId":"atlas.createObject","args":{"type":"PROJECT","title":"项目名称"}}]}
             {"question":"你想把这条记录改成什么？","options":[]}
             需要查数据先 {"tools":[{"actionId":"atlas.query","args":{"metricId":"已有指标代号","limit":10}}]}。查能力用 atlas.capabilities。
+            对象清单可能只包含部分结果。找不到用户提及的对象时，先用 atlas.searchObjects 查询名称，再判断是否需要创建；搜索有多页时按 offset 继续查询。
             选项格式 {"title":"选项","plan":{"title":"操作","steps":[...]}}。引用同一计划前一步的输出用 {"${'$'}ref":"s1.id"}。
             常用操作参数：
             atlas.record: metricId,date,value?,unit?,occurredAt?,startAt?,endAt?,zone?,fields?（对象）,eventId?。

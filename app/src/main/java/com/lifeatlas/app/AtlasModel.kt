@@ -71,7 +71,9 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
         result
     }
     private fun planInput(input:String,source:String="",importOnly:Boolean=false):JSONObject {
-        val context=obj("appearance" to ThemeRepository(store).appearance(),"objects" to JSONArray(store.objects(all=true).take(200)),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
+        val available=store.objects(all=true)
+        val context=obj("appearance" to ThemeRepository(store).appearance(),"objects" to JSONArray(available.take(200)),
+            "objectsTruncated" to (available.size>200),"selectedObjectId" to settings.prefs.getString("selected",""),"currentTask" to state.value.pending)
         if(source.isNotBlank())context.put("imageText",source).put("imageLayout",JSONArray(state.value.imageLayout)).put("imageImport",importOnly)
         var attempt=0
         while(true) {
