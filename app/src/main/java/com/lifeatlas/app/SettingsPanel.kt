@@ -18,7 +18,15 @@ import org.json.JSONObject
     var showRecovery by remember{mutableStateOf(false)};var recovery by remember{mutableStateOf<String?>(null)}
     var editJson by rememberSaveable{mutableStateOf(false)}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
-        if(panel.isEmpty())listOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理","plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明").forEach{(id,title)->OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onPanelChange(id)}){Text(title,Modifier.weight(1f));Text("›")}};if(panel.isNotEmpty())OutlinedButton(onClick={onPanelChange("")}){Text("返回")}
+        if(panel.isEmpty()) listOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理",
+            "plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明")
+            .forEachIndexed{index,(id,title)->
+                if(index==3) Spacer(Modifier.height(8.dp))
+                OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onPanelChange(id)}){
+                    Text(title,Modifier.weight(1f));Text("›")
+                }
+            }
+        if(panel.isNotEmpty())OutlinedButton(onClick={onPanelChange("")}){Text("返回")}
         when(panel) {
             "appearance"->ThemeEditor(vm)
             "ai"->{OutlinedTextField(endpoint,{endpoint=it},label={Text("Chat Completions 完整 HTTPS 地址")},modifier=Modifier.fillMaxWidth());OutlinedTextField(model,{model=it},label={Text("模型名称")},modifier=Modifier.fillMaxWidth());OutlinedTextField(key,{key=it},label={Text("API 密钥")},visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth());Button(onClick={vm.work("保存 AI 设置"){vm.settings.saveAi(endpoint,model,key);obj("message" to "AI 设置已保存")}}){Text("保存")}}

@@ -71,7 +71,7 @@ jobs:
           arch: x86_64
           target: google_apis
           disk-size: 4096M
-          disable-animations: true
+          disable-animations: false
           script: bash scripts/android_verify.sh "${{ matrix.api }}"
       - uses: actions/upload-artifact@v4
         if: always()
