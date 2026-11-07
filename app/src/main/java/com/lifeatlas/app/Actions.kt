@@ -422,7 +422,9 @@ class Actions(val store:AtlasStore) {
                     "onlyExpense" to a.optBoolean("onlyExpense"),"includeBasis" to a.optBoolean("includeBasis"))
             }
             "finance.balance" -> {
-                val anchorId=a.getString("snapshotMetricId");val definition=store.config(anchorId);require(definition.s("kind")=="SNAPSHOT");val to=a.s("asOf",LocalDate.now().toString());LocalDate.parse(to)
+                val anchorId=a.getString("snapshotMetricId");val definition=store.config(anchorId)
+                require(definition.s("kind")=="SNAPSHOT" && Units.currency(definition.s("unit"))=="CNY"){"请选择人民币余额"}
+                val to=a.s("asOf",LocalDate.now().toString());LocalDate.parse(to)
                 val anchor=store.query("SELECT * FROM atlas_facts WHERE metric_id=? AND deleted=0 AND value IS NOT NULL AND local_date<=? ORDER BY local_date DESC,occurred_at DESC,created_at DESC LIMIT 1",arrayOf(anchorId,to)).firstOrNull() ?: return obj("balanceProjection" to true,"value" to null,"reason" to "缺少实测余额")
                 val measured=normalizedValue(decimal(anchor.s("value")),JSONObject(anchor.s("fields_json")),definition)
                 var balance=measured;var uncertain=BigDecimal.ZERO;var uncertainCount=0;var missingCount=0
@@ -443,7 +445,9 @@ class Actions(val store:AtlasStore) {
                     "confirmedPart" to balance.toPlainString(),"unit" to definition.s("unit"),"anchorDate" to anchor.s("local_date"),"uncertainSameDayCount" to uncertainCount,"uncertainSameDayDelta" to uncertain.toPlainString(),"missingCount" to missingCount)
             }
             "finance.transfer" -> {
-                val from=a.getString("fromMetricId");val to=a.getString("toMetricId");require(from!=to);val f=store.config(from);val t=store.config(to);require(f.s("kind")=="CHANGE" && t.s("kind")=="CHANGE" && sameAccountUnit(f.s("unit"),t.s("unit"))){"转账需要同币种的变化指标"}
+                val from=a.getString("fromMetricId");val to=a.getString("toMetricId");require(from!=to);val f=store.config(from);val t=store.config(to)
+                require(f.s("kind")=="CHANGE" && t.s("kind")=="CHANGE" && Units.currency(f.s("unit"))=="CNY" &&
+                    sameAccountUnit(f.s("unit"),t.s("unit"))){"转账需要人民币账户"}
                 val amount=decimal(a.getString("amount"));require(amount>BigDecimal.ZERO)
                 val credit=Units.convert(amount,f.s("unit"),t.s("unit"))
                 val e=event(raw,date=a.getString("date"));record(obj("metricId" to from,"value" to (-amount).toPlainString(),"date" to a.getString("date"),"eventId" to e,"fields" to obj("flow" to "transfer","transferGroup" to e)),raw,false);record(obj("metricId" to to,"value" to credit.toPlainString(),"date" to a.getString("date"),"eventId" to e,"fields" to obj("flow" to "transfer","transferGroup" to e)),raw,false)

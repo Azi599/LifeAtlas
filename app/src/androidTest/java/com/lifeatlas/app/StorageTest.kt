@@ -289,10 +289,28 @@ class StorageTest {
         assertThrows(IllegalArgumentException::class.java){sandboxPluginTemplate(unsafe)}
     }
     @Test fun financeTransferAndAnchorRules(){
-        val balance=metric();val flows=metric("CHANGE","SUM");val other=metric("CHANGE","SUM")
+        fun currency(title:String,kind:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,"config" to obj("kind" to kind,"unit" to "元")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val balance=currency("余额","SNAPSHOT")
+        val flows=currency("流水甲","CHANGE")
+        val other=currency("流水乙","CHANGE")
         actions.single("atlas.record",obj("metricId" to balance,"value" to "1000","date" to "2026-11-02"));actions.single("atlas.record",obj("metricId" to flows,"value" to "999","date" to "2026-11-01"));actions.single("atlas.record",obj("metricId" to flows,"value" to "25","date" to "2026-11-03"))
         val computed=actions.dispatch("finance.balance",obj("snapshotMetricId" to balance,"changeMetricIds" to JSONArray().put(flows),"asOf" to "2026-11-05"));assertEquals("1025",computed.s("value"))
         actions.single("finance.transfer",obj("fromMetricId" to flows,"toMetricId" to other,"amount" to "500","date" to "2026-11-04"));val rows=db.facts(flows)+db.facts(other);val transfers=rows.filter{JSONObject(it.s("fields_json")).s("flow")=="transfer"};assertEquals(2,transfers.size);assertEquals(transfers[0].s("event_id"),transfers[1].s("event_id"));assertEquals(0,transfers.map{it.s("value").toBigDecimal()}.reduce{a,b->a+b}.signum())
+    }
+    @Test fun financeRejectsNonMoneyMetrics() {
+        val first=metric("CHANGE","SUM")
+        val second=metric("CHANGE","SUM")
+        assertThrows(IllegalArgumentException::class.java) {
+            actions.single("finance.transfer",obj("fromMetricId" to first,"toMetricId" to second,
+                "amount" to "2","date" to "2026-11-04"))
+        }
+        assertTrue(db.facts().isEmpty())
+        assertThrows(IllegalArgumentException::class.java) {
+            actions.single("atlas.createObject",obj("type" to "METRIC","title" to "错误收入",
+                "config" to obj("kind" to "CHANGE","unit" to "次","role" to "income")))
+        }
     }
     @Test fun midnightUnionClipsToRequestedDay(){
         val id=metric("ALLOCATION","UNION_DURATION");actions.single("atlas.record",obj("metricId" to id,"date" to "2026-11-04","value" to "7200","startAt" to "2026-11-04T23:00:00Z","endAt" to "2026-11-05T01:00:00Z","zone" to "UTC"))

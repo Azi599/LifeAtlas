@@ -22,6 +22,8 @@ fun validateMetric(config:JSONObject) {
     require(config.s("kind") in kinds) { "请选择记录方式" }
     if(config.s("kind")=="ALLOCATION")require(Units.isTime(config.s("unit"))){"时长单位请选择秒、分钟或小时"}
     when(config.s("role")){"balance"->require(config.s("kind")=="SNAPSHOT");"income","expense","accountChange"->require(config.s("kind")=="CHANGE");"sleep"->require(config.s("kind")=="ALLOCATION")}
+    if(config.s("role") in setOf("balance","income","expense","accountChange"))
+        require(Units.currency(config.s("unit"))=="CNY"){"财务指标单位请选择人民币"}
     val method=config.s("aggregate",if(config.s("kind")=="SNAPSHOT") "LAST_SNAPSHOT" else "SUM")
     require(method in aggregateMethods) { "不支持的统计规则：$method" }
     require(config.s("unit").length<=30) { "单位过长" }
