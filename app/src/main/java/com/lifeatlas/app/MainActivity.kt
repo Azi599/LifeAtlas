@@ -179,7 +179,7 @@ class MainActivity:ComponentActivity() {
                     OutlinedButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}
                     Box {
                         OutlinedButton(enabled=!state.busy,onClick={quickActions=true}){Text("操作")}
-                        DropdownMenu(expanded=quickActions,onDismissRequest={quickActions=false}) {
+                        DropdownMenu(expanded=quickActions,onDismissRequest={quickActions=false},modifier=Modifier.widthIn(min=152.dp,max=220.dp)) {
                             val imageActions:List<Pair<String,()->Unit>> =
                                 if(state.image!=null) listOf("移除图片" to {vm.clearImage()}) else emptyList()
                             val actions:List<Pair<String,()->Unit>> = listOf(

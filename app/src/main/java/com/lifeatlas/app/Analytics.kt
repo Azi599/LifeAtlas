@@ -28,11 +28,13 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 
-@Composable fun MetricPanel(metric:JSONObject,vm:AtlasModel,revision:Int,onRecord:(()->Unit)?=null,chartType:String="line",chooseChart:Boolean=false) {
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable fun MetricPanel(metric:JSONObject,vm:AtlasModel,revision:Int,onRecord:(()->Unit)?=null,chartType:String="line",chooseChart:Boolean=false,showHeading:Boolean=true) {
     var month by remember{mutableStateOf(YearMonth.now().toString())};var result by remember{mutableStateOf<JSONObject?>(null)};var points by remember{mutableStateOf<List<JSONObject>>(emptyList())};var error by remember{mutableStateOf("")};var request by remember{mutableIntStateOf(0)}
     var chosenChart by rememberSaveable { mutableStateOf(chartType) }
     val type = if (chooseChart) chosenChart else chartType
     val config=remember(metric){JSONObject(metric.s("config"))}
+    val keyboard=androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val currentState by vm.ui.collectAsState()
     val live=currentState.timers.any{it.s("metric_id")==metric.s("id")}
     LaunchedEffect(metric.s("id"),revision,request,live){
@@ -42,12 +44,17 @@ import java.time.YearMonth
         }while(live)
     }
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Text(metric.s("title"),style=MaterialTheme.typography.titleLarge);if(config.s("unit").isNotBlank())Text(config.s("unit"))
+        if(showHeading) Text(metric.s("title"),style=MaterialTheme.typography.titleLarge)
         if (onRecord != null) {
             Button(onClick=onRecord){Text("新增记录")}
             if(config.s("kind")=="ALLOCATION")OutlinedButton(onClick={vm.action("time.start",obj("metricId" to metric.s("id")),"开始${metric.s("title")}计时")}){Text("开始计时")}
         }
-        OutlinedTextField(month,{month=it},label={Text("分析月份 YYYY-MM")},modifier=Modifier.fillMaxWidth());TextButton(onClick={request++}){Text("查看月份")}
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically) {
+            OutlinedTextField(month,{month=it},label={Text("月份")},singleLine=true,modifier=Modifier.weight(1f),
+                keyboardOptions=androidx.compose.foundation.text.KeyboardOptions(imeAction=androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions=androidx.compose.foundation.text.KeyboardActions(onDone={keyboard?.hide();request++}))
+            OutlinedButton(onClick={keyboard?.hide();request++}){Text("查看")}
+        }
         result?.let{r->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(methodName(r.s("method")),style=MaterialTheme.typography.labelLarge);Text("${r.s("value","暂无数据")} ${r.s("unit")}",style=MaterialTheme.typography.headlineMedium);Text(if(r.s("method")=="UNION_DURATION") "${r.optInt("intervalCount")} 段区间" else "${r.optLong("usedCount",r.optLong("count"))} 条有效数值记录",style=MaterialTheme.typography.bodySmall);if(r.optBoolean("live"))Text("计时中",style=MaterialTheme.typography.labelMedium)}}}
         if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
         if (chooseChart) Pick("图表",listOf("bar" to "柱状图","line" to "折线图","heatmap" to "热力图"),chosenChart){chosenChart=it}
@@ -192,8 +199,8 @@ private fun CompositionPie(title: String, entries: List<ChartSlice>, unit: Strin
         if (metrics.isNotEmpty()) {
             Pick("选择指标",metrics.map{it.s("id") to it.s("title")},active?.s("id").orEmpty()){metricId=it}
             active?.let { metric ->
-                key(metric.s("id")) { MetricPanel(metric,vm,state.revision,chartType="bar",chooseChart=true) }
+                key(metric.s("id")) { MetricPanel(metric,vm,state.revision,chartType="bar",chooseChart=true,showHeading=false) }
             }
-        } else Text("暂无指标")
+        } else Text("暂无数据")
     }
 }
