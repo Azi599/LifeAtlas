@@ -34,7 +34,8 @@ class UiTest {
         rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("创建功能包"))
         rule.onNodeWithText("创建功能包").assertIsDisplayed()
         rule.onNodeWithText("导入到测试区").assertExists()
-        rule.onNodeWithText("返回").performScrollTo().performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("返回"))
+        rule.onNodeWithText("返回").performClick()
         rule.onNodeWithText("云端构建").performScrollTo().performClick()
         rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("新增原生能力"))
         rule.onNodeWithText("新增原生能力").assertIsDisplayed()
@@ -224,7 +225,10 @@ class UiTest {
         rule.onNodeWithText(firstTitle).performScrollTo().performClick()
         rule.onNodeWithText(secondTitle).performScrollTo().performClick()
         rule.onNodeWithText("计算").performScrollTo().assertIsEnabled().performClick()
-        rule.waitUntil(10000){!vm.ui.value.busy && vm.ui.value.result?.optJSONObject("steps")?.has("result")==true}
+        rule.waitUntil(10000){
+            !vm.ui.value.busy && vm.ui.value.result?.optJSONObject("steps")?.optJSONObject("result")
+                ?.optBoolean("balanceProjection")==true
+        }
         val result=vm.ui.value.result!!.getJSONObject("steps").getJSONObject("result")
         org.junit.Assert.assertEquals(0,result.s("value").toBigDecimal().compareTo("325".toBigDecimal()))
     }
