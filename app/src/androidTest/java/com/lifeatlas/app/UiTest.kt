@@ -176,6 +176,39 @@ class UiTest {
         org.junit.Assert.assertEquals("12",vm.store.facts(metric).single().s("value"))
     }
 
+    @Test fun accountBalanceCanIncludeMoreThanOneLedger() {
+        val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        val suffix=System.currentTimeMillis().toString()
+        fun create(title:String,kind:String):String = vm.actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,"config" to obj("kind" to kind,"unit" to "元")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val balanceTitle="账户实测 $suffix"
+        val firstTitle="账户流水甲 $suffix"
+        val secondTitle="账户流水乙 $suffix"
+        val snapshot=create(balanceTitle,"SNAPSHOT")
+        val first=create(firstTitle,"CHANGE")
+        val second=create(secondTitle,"CHANGE")
+        val today=java.time.LocalDate.now()
+        fun record(metric:String,date:String,value:String) {
+            vm.actions.single("atlas.record",obj("metricId" to metric,"date" to date,"value" to value))
+        }
+        record(first,today.minusDays(2).toString(),"100")
+        record(snapshot,today.minusDays(1).toString(),"300")
+        record(first,today.toString(),"-15")
+        record(second,today.toString(),"40")
+        runBlocking{vm.refresh().join()}
+        rule.onNodeWithTag("tab-analytics").performClick()
+        rule.onNodeWithText("余额").performScrollTo().performClick()
+        rule.onNodeWithText("实测余额：请选择").performClick()
+        rule.onNodeWithText(balanceTitle).performScrollTo().performClick()
+        rule.onNodeWithText(firstTitle).performScrollTo().performClick()
+        rule.onNodeWithText(secondTitle).performScrollTo().performClick()
+        rule.onNodeWithText("计算").performScrollTo().assertIsEnabled().performClick()
+        rule.waitUntil(10000){!vm.ui.value.busy && vm.ui.value.result?.optJSONObject("steps")?.has("result")==true}
+        val result=vm.ui.value.result!!.getJSONObject("steps").getJSONObject("result")
+        org.junit.Assert.assertEquals(0,result.s("value").toBigDecimal().compareTo("325".toBigDecimal()))
+    }
+
     private fun closeKeyboard(){
         rule.activity.runOnUiThread{
             rule.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime())

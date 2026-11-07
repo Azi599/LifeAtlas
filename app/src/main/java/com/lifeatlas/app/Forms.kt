@@ -162,11 +162,47 @@ fun methodName(s:String)=mapOf("SUM" to "累计","MEAN" to "均值","WEIGHTED_ME
 }
 
 @Composable fun FinanceDialog(objects:List<JSONObject>,balance:Boolean,onDismiss:()->Unit,onExecute:(String,JSONObject)->Unit) {
-    var from by remember{mutableStateOf("")};var to by remember{mutableStateOf("")};var amount by remember{mutableStateOf("")};var date by remember{mutableStateOf(LocalDate.now().toString())}
-    val snapshots=objects.filter{it.s("type")=="METRIC" && JSONObject(it.s("config")).s("kind")=="SNAPSHOT"};val changes=objects.filter{it.s("type")=="METRIC" && JSONObject(it.s("config")).s("kind")=="CHANGE"}
-    AlertDialog(onDismissRequest=onDismiss,title={Text(if(balance) "余额" else "转账")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
-        Pick(if(balance) "实测余额指标" else "转出变化指标",(if(balance)snapshots else changes).map{it.s("id") to it.s("title")},from){from=it};Pick(if(balance) "关联变化指标" else "转入变化指标",changes.map{it.s("id") to it.s("title")},to){to=it};if(!balance)OutlinedTextField(amount,{amount=it},label={Text("金额")},modifier=Modifier.fillMaxWidth());OutlinedTextField(date,{date=it},label={Text(if(balance) "截止日期" else "发生日期")},modifier=Modifier.fillMaxWidth())
-    }},confirmButton={TextButton(enabled=from.isNotEmpty() && to.isNotEmpty() && (balance || amount.toBigDecimalOrNull()!=null),onClick={if(balance)onExecute("finance.balance",obj("snapshotMetricId" to from,"changeMetricIds" to JSONArray().put(to),"asOf" to date)) else onExecute("finance.transfer",obj("fromMetricId" to from,"toMetricId" to to,"amount" to amount,"date" to date))}){Text(if(balance) "计算" else "转账")}},dismissButton={TextButton(onClick=onDismiss){Text("取消")}})
+    var from by remember{mutableStateOf("")}
+    var to by remember{mutableStateOf("")}
+    var selected by remember{mutableStateOf<Set<String>>(emptySet())}
+    var amount by remember{mutableStateOf("")}
+    var date by remember{mutableStateOf(LocalDate.now().toString())}
+    val money=objects.filter { item ->
+        item.s("type")=="METRIC" && item.optInt("archived")==0 &&
+            Units.currency(JSONObject(item.s("config")).s("unit"))=="CNY"
+    }
+    val snapshots=money.filter{JSONObject(it.s("config")).s("kind")=="SNAPSHOT"}
+    val changes=money.filter{JSONObject(it.s("config")).s("kind")=="CHANGE"}
+    val validDate=runCatching{LocalDate.parse(date)}.isSuccess
+    val validAmount=amount.toBigDecimalOrNull()?.signum()==1
+    AlertDialog(onDismissRequest=onDismiss,title={Text(if(balance) "余额" else "转账")},text={
+        Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            Pick(if(balance) "实测余额" else "转出账户",(if(balance)snapshots else changes).map{it.s("id") to it.s("title")},from){from=it}
+            if(balance) {
+                Text("关联流水",style=MaterialTheme.typography.titleSmall)
+                changes.forEach { item ->
+                    val id=item.s("id")
+                    Row(Modifier.fillMaxWidth().clickable {
+                        selected=if(id in selected) selected-id else selected+id
+                    },verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(id in selected,onCheckedChange={checked->selected=if(checked) selected+id else selected-id})
+                        Text(item.s("title"),Modifier.weight(1f))
+                    }
+                }
+            } else {
+                Pick("转入账户",changes.filter{it.s("id")!=from}.map{it.s("id") to it.s("title")},to){to=it}
+                OutlinedTextField(amount,{amount=it},label={Text("金额")},modifier=Modifier.fillMaxWidth())
+            }
+            OutlinedTextField(date,{date=it},label={Text(if(balance) "截止日期" else "发生日期")},modifier=Modifier.fillMaxWidth())
+        }
+    },confirmButton={
+        val ready=from.isNotEmpty() && validDate && if(balance) selected.isNotEmpty()
+            else to.isNotEmpty() && from!=to && validAmount
+        Button(enabled=ready,onClick={
+            if(balance) onExecute("finance.balance",obj("snapshotMetricId" to from,"changeMetricIds" to JSONArray(selected.toList()),"asOf" to date))
+            else onExecute("finance.transfer",obj("fromMetricId" to from,"toMetricId" to to,"amount" to amount,"date" to date))
+        }){Text(if(balance) "计算" else "转账")}
+    },dismissButton={OutlinedButton(onClick=onDismiss){Text("取消")}})
 }
 @Composable fun CorrelationDialog(objects:List<JSONObject>,onDismiss:()->Unit,onExecute:(JSONObject)->Unit) {
     var x by remember{mutableStateOf("")};var y by remember{mutableStateOf("")};var from by remember{mutableStateOf(LocalDate.now().minusMonths(3).toString())};var to by remember{mutableStateOf(LocalDate.now().toString())};val metrics=objects.filter{it.s("type")=="METRIC"}
