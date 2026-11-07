@@ -217,7 +217,8 @@ class UiTest {
         record(second,today.toString(),"40")
         runBlocking{vm.refresh().join()}
         rule.onNodeWithTag("tab-analytics").performClick()
-        rule.onNodeWithText("余额").performScrollTo().performClick()
+        rule.onNodeWithTag("atlas-list").performScrollToNode(hasText("余额"))
+        rule.onNodeWithText("余额").performClick()
         rule.onNodeWithText("实测余额：请选择").performClick()
         rule.onNodeWithText(balanceTitle).performScrollTo().performClick()
         rule.onNodeWithText(firstTitle).performScrollTo().performClick()

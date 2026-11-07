@@ -185,8 +185,8 @@ class MainActivity:ComponentActivity() {
                             val actions:List<Pair<String,()->Unit>> = listOf(
                                 "手动录入" to {manualRecord=true},
                                 "记文字" to {eventDialog=true},
-                                "撤销" to {vm.undo()},
-                                "恢复" to {vm.undo(true)}
+                                "撤销" to {vm.undo();Unit},
+                                "恢复" to {vm.undo(true);Unit}
                             ) + imageActions
                             actions.forEach { (title,action) ->
                                 OutlinedButton(modifier=Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=3.dp),onClick={

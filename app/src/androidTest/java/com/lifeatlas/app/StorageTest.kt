@@ -163,7 +163,7 @@ class StorageTest {
             .getJSONObject("steps").getJSONObject("result").s("id")
         val plan=Offline.plan("今天Z其他支出7.5元",db)!!
         actions.execute(plan)
-        assertEquals("7.50",db.facts(id).single().s("value"))
+        assertEquals("-7.50",db.facts(id).single().s("value"))
         val page=actions.dispatch("atlas.searchObjects",obj("keyword" to "","type" to "METRIC","offset" to 500))
         assertEquals(500,page.optInt("offset"))
         assertFalse(page.optBoolean("hasMore"))
@@ -561,7 +561,12 @@ class StorageTest {
     }
 
     @Test fun editingAndDeletingTransferMaintainsBothLegs() {
-        val from=metric("CHANGE","SUM");val to=metric("CHANGE","SUM");actions.single("finance.transfer",obj("fromMetricId" to from,"toMetricId" to to,"amount" to "500","date" to "2026-11-04"))
+        fun account(title:String):String=actions.single("atlas.createObject",obj("type" to "METRIC","title" to title,
+            "config" to obj("kind" to "CHANGE","unit" to "元","aggregate" to "SUM")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        val from=account("转出流水")
+        val to=account("转入流水")
+        actions.single("finance.transfer",obj("fromMetricId" to from,"toMetricId" to to,"amount" to "500","date" to "2026-11-04"))
         val id=db.facts(from).first().s("id");actions.single("atlas.editRecord",obj("id" to id,"value" to "-300","date" to "2026-11-05"));assertEquals("300",db.facts(to).first().s("value"));assertEquals("2026-11-05",db.facts(to).first().s("local_date"));db.undo();assertEquals("500",db.facts(to).first().s("value"))
         actions.single("atlas.deleteRecord",obj("id" to id));assertTrue(db.facts(from).isEmpty() && db.facts(to).isEmpty());db.undo();assertEquals(1,db.facts(from).size);assertEquals(1,db.facts(to).size)
     }
