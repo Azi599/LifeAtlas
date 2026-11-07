@@ -1,0 +1,21 @@
+services:
+  service:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - jobs:/data
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      ATLAS_DOMAIN: ${ATLAS_DOMAIN:?Set ATLAS_DOMAIN}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+volumes:
+  jobs:
+  caddy_data:

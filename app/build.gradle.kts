@@ -5,19 +5,43 @@ plugins {
 }
 android {
     namespace = "com.lifeatlas.app"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.lifeatlas.app.newhost"
         minSdk = 31
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.0.1-dev"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        targetSdk = 36
+        versionCode = providers.gradleProperty("atlasVersionCode").orElse("3").get().toInt()
+        versionName = "0.3.0-test"
+        manifestPlaceholders["appLabel"] = "Life Atlas"
     }
-    buildFeatures { compose = true }
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".test"
+            manifestPlaceholders["appLabel"] = "Life Atlas 实测"
+        }
+    }
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("standalone") {dimension="distribution";buildConfigField("String","CHANNEL","\"standalone\"")}
+        create("play") {dimension="distribution";buildConfigField("String","CHANNEL","\"play\"")}
+    }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.01.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation(platform("androidx.compose:compose-bom:2025.01.01"))
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.material3:material3")

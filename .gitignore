@@ -4,3 +4,8 @@ build/
 local.properties
 .idea/
 *.iml
+
+.env
+__pycache__/
+*.pyc
+*.jks
