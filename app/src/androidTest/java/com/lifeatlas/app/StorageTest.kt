@@ -97,6 +97,28 @@ class StorageTest {
         assertTrue(db.cashflow("2026-10-12","2026-10-12").isEmpty())
     }
 
+    @Test fun missingIncomeAndAbsentCategoryRemainUnknown() {
+        val date="2026-10-14"
+        fun create(title:String,role:String):String = actions.single("atlas.createObject",obj(
+            "type" to "METRIC","title" to title,
+            "config" to obj("kind" to "CHANGE","unit" to "元","role" to role,"aggregate" to "SUM")
+        )).getJSONObject("steps").getJSONObject("result").s("id")
+        val food=create("餐饮","expense")
+        val transport=create("交通","expense")
+        val income=create("收入","income")
+        actions.single("atlas.record",obj("metricId" to food,"date" to date,"value" to "25.80"))
+        val partial=db.cashflow(date,date).single()
+        assertTrue(partial.isNull("income"))
+        assertTrue(partial.isNull("net"))
+        val share=db.spendingShare(date,date,setOf(transport))
+        assertTrue(share.isNull("percentage"))
+        assertTrue(share.s("reason").contains("没有支出记录"))
+        actions.single("atlas.record",obj("metricId" to income,"date" to date,"value" to "0"))
+        val complete=db.cashflow(date,date).single()
+        assertEquals("0",complete.s("income"))
+        assertEquals("-25.8",complete.s("net"))
+    }
+
     @Test fun dailySpendingKeepsUnknownDaysSeparateFromZero(){
         fun create(title:String):String = actions.single("atlas.createObject",obj(
             "type" to "METRIC","title" to title,"config" to obj("kind" to "CHANGE","unit" to "元","role" to "expense")

@@ -75,7 +75,9 @@ internal fun AtlasStore.cashflow(from: String,to: String,metricIds: Set<String> 
         obj("unit" to if(currency=="CNY") "元" else currency,"from" to from,"to" to to,
             "income" to income.takeIf{incomeCount>incomeMissing}?.stripTrailingZeros()?.toPlainString(),
             "expense" to expense.takeIf{expenseCount>expenseMissing}?.stripTrailingZeros()?.toPlainString(),
-            "net" to (income-expense).takeIf{incomeMissing+expenseMissing==0L}?.stripTrailingZeros()?.toPlainString(),
+            "net" to (income-expense).takeIf{
+                incomeCount>0 && expenseCount>0 && incomeMissing+expenseMissing==0L
+            }?.stripTrailingZeros()?.toPlainString(),
             "incomeCount" to incomeCount,"expenseCount" to expenseCount,
             "missingExpenseCount" to expenseMissing,
             "missingCount" to incomeMissing+expenseMissing,"spending" to spending)
@@ -88,7 +90,7 @@ internal fun AtlasStore.spendingShare(from:String,to:String,metricIds:Set<String
     val selected=cashflow(from,to,metricIds).singleOrNull{it.s("unit")=="元"}
     val denominator=total?.s("expense")?.toBigDecimalOrNull()
     val complete=total!=null && total.optLong("missingExpenseCount")==0L
-    val amount=if(complete) selected?.s("expense")?.toBigDecimalOrNull() ?: BigDecimal.ZERO else null
+    val amount=if(complete) selected?.s("expense")?.toBigDecimalOrNull() else null
     val percent=if(amount!=null && denominator!=null && denominator.signum()>0)
         amount.multiply(BigDecimal("100")).divide(denominator,MathContext.DECIMAL128).toPlainString()
         else null
@@ -97,6 +99,8 @@ internal fun AtlasStore.spendingShare(from:String,to:String,metricIds:Set<String
         "reason" to when {
             total==null -> "所选日期没有支出记录"
             !complete -> "有支出金额待补充"
+            selected==null -> "该类别在所选日期没有支出记录"
+            amount==null -> "该类别的支出金额待补充"
             denominator==null || denominator.signum()<=0 -> "全部支出净额不大于零"
             else -> null
         })
