@@ -237,6 +237,7 @@ class MainActivity:ComponentActivity() {
             }
         }}
     ) {padding->
+        key(page) {
         LazyColumn(Modifier.fillMaxSize().padding(padding).graphicsLayer{alpha=pageAlpha.value}.testTag("atlas-list"),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.error.isNotBlank() && page!="workspace") item {Text(state.error,color=MaterialTheme.colorScheme.error)}
             when(page) {
@@ -335,6 +336,7 @@ class MainActivity:ComponentActivity() {
                 }
             }
             item{Spacer(Modifier.height(12.dp))}
+        }
         }
     }
     }
