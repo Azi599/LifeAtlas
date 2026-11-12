@@ -1,15 +1,41 @@
 package com.lifeatlas.app
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
+
+@Composable fun SettingsHome(onSpace:()->Unit,onPanelChange:(String)->Unit) {
+    val groups=listOf(
+        listOf("space" to "空间管理","appearance" to "外观","ai" to "AI 与模型","data" to "数据管理"),
+        listOf("plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明")
+    )
+    Column(verticalArrangement=Arrangement.spacedBy(14.dp)) {
+        groups.forEach { group ->
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                group.forEachIndexed { index,(id,title) ->
+                    Row(Modifier.fillMaxWidth().clickable(role=Role.Button) {
+                        if(id=="space") onSpace() else onPanelChange(id)
+                    }.heightIn(min=56.dp).padding(horizontal=16.dp,vertical=10.dp),
+                        verticalAlignment=Alignment.CenterVertically) {
+                        Text(title,Modifier.weight(1f),style=MaterialTheme.typography.bodyLarge)
+                        Text("›",color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.titleMedium)
+                    }
+                    if(index<group.lastIndex) HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+        }
+    }
+}
 
 @Composable fun SettingsPanel(vm:AtlasModel,panel:String,onPanelChange:(String)->Unit,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,onPlugin:()->Unit) {
     var endpoint by remember{mutableStateOf(vm.settings.ai().endpoint)};var model by remember{mutableStateOf(vm.settings.ai().model)};var key by remember{mutableStateOf(vm.settings.ai().key)}
@@ -18,14 +44,6 @@ import org.json.JSONObject
     var showRecovery by remember{mutableStateOf(false)};var recovery by remember{mutableStateOf<String?>(null)}
     var editJson by rememberSaveable{mutableStateOf(false)}
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
-        if(panel.isEmpty()) listOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理",
-            "plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明")
-            .forEachIndexed{index,(id,title)->
-                if(index==3) Spacer(Modifier.height(8.dp))
-                OutlinedButton(modifier=Modifier.fillMaxWidth(),onClick={onPanelChange(id)}){
-                    Text(title,Modifier.weight(1f));Text("›")
-                }
-            }
         if(panel.isNotEmpty())OutlinedButton(onClick={onPanelChange("")}){Text("返回")}
         when(panel) {
             "appearance"->ThemeEditor(vm)

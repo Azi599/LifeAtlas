@@ -296,13 +296,12 @@ class MainActivity:ComponentActivity() {
                 }
                 "settings" -> {
                     if(!settingsSubpage) item("space-entry") {
-                        OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理",Modifier.weight(1f));Text("›")}
+                        SettingsHome(onSpace={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},onPanelChange={settingsPanel=it})
                     }
-                    item("settings-panel"){SettingsPanel(vm=vm,panel=settingsPanel,onPanelChange={settingsPanel=it},
+                    if(settingsSubpage) item("settings-panel"){SettingsPanel(vm=vm,panel=settingsPanel,onPanelChange={settingsPanel=it},
                         onExport=onExport,onCsv=onCsv,onErrors=onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
                     if(settingsPanel=="plugin") {
                     item{
-                        Text("插件中心",style=MaterialTheme.typography.titleLarge)
                         ActionRow {
                             OutlinedButton(onClick={pluginWizard=true}){Text("创建功能包")}
                             OutlinedButton(onClick=onSandboxPlugin){Text("导入到测试区")}
