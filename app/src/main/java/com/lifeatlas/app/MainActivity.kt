@@ -124,6 +124,7 @@ class MainActivity:ComponentActivity() {
     val settingsListState=rememberLazyListState()
     val spacesListState=rememberLazyListState()
     val listState=when(page){"workspace"->workspaceListState;"history"->historyListState;"analytics"->analyticsListState;"settings"->settingsListState;else->spacesListState}
+    val scrollPositions=remember { mutableMapOf<String,Pair<Int,Int>>() }
     val pageAlpha=remember{Animatable(1f)}
     val notices=remember{SnackbarHostState()}
     val focusManager=LocalFocusManager.current
@@ -134,12 +135,13 @@ class MainActivity:ComponentActivity() {
             notices.showSnackbar(state.status)
         }
     }
-    LaunchedEffect(selected){spacesListState.scrollToItem(0)}
-    LaunchedEffect(state.historyOffset){historyListState.scrollToItem(0)}
-    LaunchedEffect(settingsPanel){settingsListState.scrollToItem(0)}
+    LaunchedEffect(selected){spacesListState.requestScrollToItem(0)}
+    LaunchedEffect(state.historyOffset){historyListState.requestScrollToItem(0)}
+    LaunchedEffect(settingsPanel){settingsListState.requestScrollToItem(0)}
     LaunchedEffect(page) {
         notices.currentSnackbarData?.dismiss()
         quickActions=false
+        scrollPositions[page]?.let { (index,offset) -> listState.requestScrollToItem(index,offset) }
         pageAlpha.snapTo(0.88f)
         pageAlpha.animateTo(1f,animationSpec=tween(160))
     }
@@ -177,7 +179,7 @@ class MainActivity:ComponentActivity() {
         }
     }
     LaunchedEffect(state.pending){if(state.pending!=null){page="workspace";selected=null}}
-    LaunchedEffect(state.busy,state.result) {if(!state.busy && state.result!=null && page=="workspace")listState.animateScrollToItem(0)}
+    LaunchedEffect(state.busy,state.result) {if(!state.busy && state.result!=null && page=="workspace")workspaceListState.requestScrollToItem(0)}
     LaunchedEffect(state.result) {val result=state.result ?: return@LaunchedEffect;val steps=result.optJSONObject("steps");steps?.keys()?.forEach{key->val r=steps.optJSONObject(key);if(r!=null && r.has("page")){page=r.s("page");selected=r.s("objectId").ifEmpty{null}}}}
     val tabs = listOf("workspace" to "输入", "history" to "时间轴", "analytics" to "分析", "settings" to "我的")
     val currentTab = if (page == "spaces") "settings" else page
@@ -233,11 +235,10 @@ class MainActivity:ComponentActivity() {
                 }
             }}
             AnimatedVisibility(visible=!keyboard) {
-                NavigationBar(modifier=Modifier.testTag("atlas-navigation"),containerColor=MaterialTheme.colorScheme.surface) {tabs.forEachIndexed{i,(id,title)->NavigationBarItem(modifier=Modifier.testTag("tab-$id"),colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=currentTab==id,onClick={page=id;selected=null;settingsPanel=""},icon={NavGlyph(if(i==0)0 else i+1,currentTab==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelMedium)})}}
+                NavigationBar(modifier=Modifier.testTag("atlas-navigation"),containerColor=MaterialTheme.colorScheme.surface) {tabs.forEachIndexed{i,(id,title)->NavigationBarItem(modifier=Modifier.testTag("tab-$id"),colors=NavigationBarItemDefaults.colors(selectedIconColor=MaterialTheme.colorScheme.primary,selectedTextColor=MaterialTheme.colorScheme.onSurface,unselectedIconColor=MaterialTheme.colorScheme.onSurfaceVariant,unselectedTextColor=MaterialTheme.colorScheme.onSurfaceVariant,indicatorColor=MaterialTheme.colorScheme.primaryContainer),selected=currentTab==id,onClick={if(page!=id)scrollPositions[page]=listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset;page=id;selected=null;settingsPanel=""},icon={NavGlyph(if(i==0)0 else i+1,currentTab==id)},label={Text(title,maxLines=2,style=MaterialTheme.typography.labelMedium)})}}
             }
         }}
     ) {padding->
-        key(page) {
         LazyColumn(Modifier.fillMaxSize().padding(padding).graphicsLayer{alpha=pageAlpha.value}.testTag("atlas-list"),state=listState,contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(if(state.compact)8.dp else 14.dp)) {
             if(state.error.isNotBlank() && page!="workspace") item {Text(state.error,color=MaterialTheme.colorScheme.error)}
             when(page) {
@@ -335,7 +336,6 @@ class MainActivity:ComponentActivity() {
                 }
             }
             item{Spacer(Modifier.height(12.dp))}
-        }
         }
     }
     }
