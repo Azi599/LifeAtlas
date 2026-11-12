@@ -48,7 +48,7 @@ class AtlasModel(app:Application):AndroidViewModel(app) {
     fun work(title:String,block:()->JSONObject)=viewModelScope.launch(Dispatchers.IO) {
         commandMutex.withLock {
         update{it.copy(busy=true,status=title,error="")}
-        try {val result=block();update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成"))};load()} catch(e:Exception){update{it.copy(status="操作失败："+(e.message?.take(160) ?: "请重试"),error=e.message?.take(300) ?: "操作失败")}} finally{update{it.copy(busy=false)}}
+        try {val result=block();val message=result.s("message",if(result.s("status")=="PREVIEW") "请确认操作" else "已完成");update{it.copy(result=result,pending=if(result.s("status")=="PREVIEW") result.getJSONObject("plan") else if(result.has("question")) result.getJSONObject("question") else null,status=if(message=="已完成 1 项操作" && !title.startsWith("正在")) "${title}完成" else message)};load()} catch(e:Exception){update{it.copy(status="操作失败："+(e.message?.take(160) ?: "请重试"),error=e.message?.take(300) ?: "操作失败")}} finally{update{it.copy(busy=false)}}
         }
     }
     fun action(id:String,args:JSONObject,title:String=id,confirmed:Boolean=false)=work(title){actions.single(id,args,title,confirmed)}

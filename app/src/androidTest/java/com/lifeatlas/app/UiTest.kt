@@ -151,11 +151,13 @@ class UiTest {
         runBlocking { vm.refresh().join() }
         listOf("workspace","history","analytics","settings").forEach { id -> rule.onNodeWithTag("tab-$id").assertIsDisplayed() }
         rule.onNodeWithText("空间管理").assertDoesNotExist()
+        rule.onNodeWithTag("command-input").performClick()
+        rule.waitUntil(10000){androidx.core.view.ViewCompat.getRootWindowInsets(rule.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())==true}
         rule.onNodeWithTag("command-input").performTextReplacement("记录今天${title}两杯")
         rule.onNodeWithTag("command-send").assertIsDisplayed()
         rule.onNodeWithTag("command-input").performImeAction()
         rule.waitUntil(10000) { vm.store.facts(metric).isNotEmpty() && !vm.ui.value.busy }
-        closeKeyboard()
+        rule.waitUntil(10000){androidx.core.view.ViewCompat.getRootWindowInsets(rule.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())!=true}
         rule.onNodeWithTag("tab-history").performClick()
         rule.onNodeWithTag("command-input").assertDoesNotExist()
         val row = hasTestTag("timeline-item") and hasAnyDescendant(hasText(title))
@@ -165,6 +167,28 @@ class UiTest {
         rule.onNodeWithText("保存").assertIsDisplayed().performClick()
         rule.waitUntil(10000) { vm.store.facts(metric).single().s("value")=="3" && !vm.ui.value.busy }
         rule.onNode(hasText("3 杯") and hasAnyAncestor(row)).assertIsDisplayed()
+    }
+
+    @Test fun switchingTabsKeepsTimelinePositionAndSettingsShowFeedback() {
+        val vm=ViewModelProvider(rule.activity)[AtlasModel::class.java]
+        val title="位置测试 ${System.currentTimeMillis()}"
+        val metric=vm.actions.single("atlas.createObject",obj("type" to "METRIC","title" to title,
+            "config" to obj("kind" to "CHANGE","unit" to "条","aggregate" to "SUM")))
+            .getJSONObject("steps").getJSONObject("result").s("id")
+        repeat(18){value->vm.actions.single("atlas.record",obj("metricId" to metric,"value" to value.toString(),"date" to java.time.LocalDate.now().toString()))}
+        runBlocking{vm.refresh().join()}
+        rule.onNodeWithTag("tab-history").performClick()
+        val row=hasTestTag("timeline-item") and hasAnyDescendant(hasText("8 条")) and hasAnyDescendant(hasText(title))
+        rule.onNodeWithTag("atlas-list").performScrollToNode(row)
+        rule.onNode(row).assertIsDisplayed()
+        rule.onNodeWithTag("tab-settings").performClick()
+        rule.onNodeWithText("外观").performClick()
+        rule.onNodeWithText("应用所选主题").performScrollTo().performClick()
+        rule.waitUntil(10000){!vm.ui.value.busy && vm.ui.value.status=="应用主题完成"}
+        rule.waitUntil(10000){rule.onAllNodesWithText("应用主题完成").fetchSemanticsNodes().isNotEmpty()}
+        rule.onNodeWithText("应用主题完成").assertIsDisplayed()
+        rule.onNodeWithTag("tab-history").performClick()
+        rule.onNode(row).assertIsDisplayed()
     }
 
     @Test fun pinnedChartCanChangeStyleAndHideWithoutDeletingData() {
@@ -225,7 +249,7 @@ class UiTest {
         rule.onNode(hasText(balanceTitle) and hasClickAction()).performScrollTo().performClick()
         rule.onNode(hasText(firstTitle) and hasClickAction()).performScrollTo().performClick()
         rule.onNode(hasText(secondTitle) and hasClickAction()).performScrollTo().performClick()
-        rule.onNodeWithText("计算").performScrollTo().assertIsEnabled().performClick()
+        rule.onNodeWithText("计算").assertIsDisplayed().assertIsEnabled().performClick()
         rule.waitUntil(10000){
             !vm.ui.value.busy && vm.ui.value.result?.optJSONObject("steps")?.optJSONObject("result")
                 ?.optBoolean("balanceProjection")==true

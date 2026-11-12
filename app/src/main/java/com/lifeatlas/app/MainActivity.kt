@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -107,6 +109,7 @@ class MainActivity:ComponentActivity() {
     }
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable fun App(vm:AtlasModel,onExport:(Boolean)->Unit,onCsv:()->Unit,onErrors:()->Unit,onRestore:()->Unit,
     onPlugin:()->Unit,onSandboxPlugin:()->Unit,onPluginExport:(String)->Unit,onImage:()->Unit) {
     val state by vm.ui.collectAsState();val keyboard=WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current)>0;var settingsPanel by rememberSaveable{mutableStateOf("")};var page by rememberSaveable{mutableStateOf("workspace")};var selected by rememberSaveable{mutableStateOf<String?>(null)}
@@ -115,12 +118,27 @@ class MainActivity:ComponentActivity() {
     var quickActions by remember{mutableStateOf(false)}
     var spaceReturn by rememberSaveable{mutableStateOf("settings")}
     val command=state.draft;var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<JSONObject?>(null)};var record by remember{mutableStateOf<JSONObject?>(null)};var editingFact by remember{mutableStateOf<JSONObject?>(null)};var restoreConfirm by remember{mutableStateOf(false)};var pluginWizard by remember{mutableStateOf(false)};var workflowDialog by remember{mutableStateOf(false)};var buildDialog by remember{mutableStateOf(false)};var eventDialog by remember{mutableStateOf(false)};var financeDialog by remember{mutableStateOf<String?>(null)};var correlationDialog by remember{mutableStateOf(false)}
-    val listState=rememberLazyListState()
+    val workspaceListState=rememberLazyListState()
+    val historyListState=rememberLazyListState()
+    val analyticsListState=rememberLazyListState()
+    val settingsListState=rememberLazyListState()
+    val spacesListState=rememberLazyListState()
+    val listState=when(page){"workspace"->workspaceListState;"history"->historyListState;"analytics"->analyticsListState;"settings"->settingsListState;else->spacesListState}
     val pageAlpha=remember{Animatable(1f)}
     val notices=remember{SnackbarHostState()}
-    LaunchedEffect(state.result){if(state.result?.optBoolean("notice")==true) notices.showSnackbar(state.status)}
-    LaunchedEffect(page,selected,state.historyOffset,settingsPanel){listState.scrollToItem(0)}
+    val focusManager=LocalFocusManager.current
+    val keyboardController=LocalSoftwareKeyboardController.current
+    LaunchedEffect(state.status,state.busy,state.result) {
+        if(!state.busy && state.status.isNotBlank() && (page!="workspace" || state.result?.optBoolean("notice")==true)) {
+            notices.currentSnackbarData?.dismiss()
+            notices.showSnackbar(state.status)
+        }
+    }
+    LaunchedEffect(selected){spacesListState.scrollToItem(0)}
+    LaunchedEffect(state.historyOffset){historyListState.scrollToItem(0)}
+    LaunchedEffect(settingsPanel){settingsListState.scrollToItem(0)}
     LaunchedEffect(page) {
+        notices.currentSnackbarData?.dismiss()
         quickActions=false
         pageAlpha.snapTo(0.88f)
         pageAlpha.animateTo(1f,animationSpec=tween(160))
@@ -167,16 +185,28 @@ class MainActivity:ComponentActivity() {
         containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onBackground,
         snackbarHost={SnackbarHost(notices)},
         topBar={Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
-            Text(when(page) {"workspace" -> "Life Atlas";"spaces" -> chosen?.s("title") ?: "空间";else -> tabs.firstOrNull{it.first==page}?.second ?: "Life Atlas"},style=MaterialTheme.typography.headlineSmall)
+            val heading=when {
+                page=="workspace" -> "Life Atlas"
+                page=="spaces" -> chosen?.s("title") ?: "空间"
+                page=="settings" && settingsSubpage -> mapOf("appearance" to "外观","ai" to "AI 与模型","data" to "数据管理","plugin" to "功能包","build" to "云端构建","updates" to "应用更新","help" to "使用说明")[settingsPanel] ?: "我的"
+                else -> tabs.firstOrNull{it.first==page}?.second ?: "Life Atlas"
+            }
+            Text(heading,style=MaterialTheme.typography.headlineSmall)
             if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }},
         bottomBar={Column(Modifier.imePadding()) {
             if(page=="workspace") Surface(Modifier.fillMaxWidth().animateContentSize(),shape=RoundedCornerShape(topStart=20.dp,topEnd=20.dp)) {Column(Modifier.padding(horizontal=18.dp,vertical=10.dp)) {
                 if(state.status.isNotBlank()) Text(state.status,style=MaterialTheme.typography.bodySmall,maxLines=3,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=if(state.error.isNotBlank())MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth().padding(bottom=4.dp).testTag("command-status"))
                 val canSend = !state.busy && (command.isNotBlank() || state.imageText.isNotBlank())
+                fun sendCommand() {
+                    if(!canSend) return
+                    focusManager.clearFocus()
+                    keyboardController?.hide()
+                    vm.submit(command)
+                }
                 OutlinedTextField(command,vm::saveDraft,modifier=Modifier.fillMaxWidth().testTag("command-input"),
                     placeholder={Text("写点什么")},minLines=1,maxLines=3,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),
-                    keyboardActions=KeyboardActions(onSend={if(canSend) vm.submit(command)}))
+                    keyboardActions=KeyboardActions(onSend={sendCommand()}))
                 Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
                     OutlinedButton(enabled=!state.busy,onClick=onImage){Text(if(state.image==null) "图片" else "已附图")}
                     Box {
@@ -199,7 +229,7 @@ class MainActivity:ComponentActivity() {
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    Button(modifier=Modifier.testTag("command-send"),enabled=canSend,onClick={vm.submit(command)}){Text(if(state.busy) "处理中" else "发送")}
+                    Button(modifier=Modifier.testTag("command-send"),enabled=canSend,onClick={sendCommand()}){Text(if(state.busy) "处理中" else "发送")}
                 }
             }}
             AnimatedVisibility(visible=!keyboard) {
@@ -265,7 +295,7 @@ class MainActivity:ComponentActivity() {
                 }
                 "settings" -> {
                     if(!settingsSubpage) item("space-entry") {
-                        OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理")}
+                        OutlinedButton(onClick={selected=null;spaceSearch="";spaceOffset=0;archived=false;spaceReturn="settings";page="spaces"},modifier=Modifier.fillMaxWidth()){Text("空间管理",Modifier.weight(1f));Text("›")}
                     }
                     item("settings-panel"){SettingsPanel(vm=vm,panel=settingsPanel,onPanelChange={settingsPanel=it},
                         onExport=onExport,onCsv=onCsv,onErrors=onErrors,onRestore={restoreConfirm=true},onPlugin=onPlugin)}
