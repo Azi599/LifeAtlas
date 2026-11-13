@@ -1,0 +1,42 @@
+name: Native feature forge
+run-name: Forge ${{ inputs.request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        required: true
+        description: Request UUID without hyphens
+      request_json:
+        required: true
+        description: JSON feature requirements
+concurrency:
+  group: forge-${{ inputs.request_id }}
+  cancel-in-progress: false
+permissions:
+  contents: write
+  actions: write
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate source, commit and dispatch native tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_BASE_BRANCH: ${{ github.ref_name }}
+          AI_API_KEY: ${{ secrets.LIFEATLAS_AI_KEY }}
+          AI_ENDPOINT: ${{ vars.LIFEATLAS_AI_ENDPOINT || 'https://api.deepseek.com/chat/completions' }}
+          AI_MODEL: ${{ vars.LIFEATLAS_AI_MODEL || 'deepseek-chat' }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          REQUEST_JSON: ${{ inputs.request_json }}
+        run: python3 scripts/forge_job.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feature-change-plan
+          path: feature-plan.json
+          if-no-files-found: error
